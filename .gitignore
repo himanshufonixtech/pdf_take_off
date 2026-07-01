@@ -1,0 +1,20 @@
+# Environments
+.env
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Project specific folders
+uploads/
+outputs/
+
+# OS specific files
+.DS_Store
+Thumbs.db

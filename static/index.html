@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FenX Window & Door Takeoff Prototype</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- CSS Stylesheet -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar: Recent Takeoffs -->
+        <aside class="sidebar">
+            <div class="brand">
+                <i class="fa-solid fa-wind-warping brand-icon"></i>
+                <div class="brand-text">
+                    <h1>FenX</h1>
+                    <span>Takeoff Automation</span>
+                </div>
+            </div>
+            
+            <div class="sidebar-header">
+                <h2>Recent Jobs</h2>
+                <button id="refresh-jobs-btn" title="Refresh list"><i class="fa-solid fa-arrows-rotate"></i></button>
+            </div>
+            
+            <div class="search-bar">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" id="search-jobs" placeholder="Filter by project...">
+            </div>
+            
+            <div class="jobs-list" id="recent-jobs-list">
+                <div class="jobs-loading-state">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i> Loading jobs...
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-content">
+            <!-- Top Header -->
+            <header class="top-header">
+                <div class="header-title">
+                    <h2>PDF Takeoff Tool - POC</h2>
+                    <p>Upload a complete construction submission.</p>
+                </div>
+                <div class="header-status" style="display: flex; gap: 16px; align-items: center;">
+                    <button id="open-upload-modal-btn" class="btn btn-primary" style="padding: 8px 16px;"><i class="fa-solid fa-cloud-arrow-up"></i> Process Submission</button>
+                    <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> System Online</span>
+                </div>
+            </header>
+
+            <div class="workspace-grid">
+                <!-- Main Results Panel (Now takes full width) -->
+                <div class="results-panel">
+                    <div class="empty-state" id="no-active-job">
+                        <i class="fa-solid fa-sheet-plastic empty-icon"></i>
+                        <h3>No Active Takeoff</h3>
+                        <p>Upload a new PDF submission or select a processed job from the sidebar to view data previews and downloads.</p>
+                    </div>
+
+                    <div class="empty-state" id="processing-job-state" style="display: none; flex-direction: column; align-items: center; justify-content: center; width: 100%;">
+                        <i class="fa-solid fa-gears fa-spin empty-icon" style="color: var(--color-primary); margin-bottom: 24px;"></i>
+                        <h3 id="processing-project-name">Processing Takeoff...</h3>
+                        <p id="processing-job-id" style="font-size: 13px; color: var(--text-muted); margin-bottom: 30px; font-family: monospace;">FNX-YYYYMMDD-001</p>
+                        
+                        <div class="main-progress-container" style="width: 100%; max-width: 480px; margin: 0 auto 30px auto; background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-glass); padding: 24px; border-radius: 12px; text-align: left;">
+                            <div class="progress-bar-bg" style="height: 12px; border-radius: 10px; margin-bottom: 12px; background: rgba(15, 23, 42, 0.8);">
+                                <div class="progress-bar-fill" id="main-progress-fill" style="width: 0%; box-shadow: 0 0 15px var(--color-primary); transition: width 0.4s cubic-bezier(0.1, 0.8, 0.25, 1);"></div>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 14px;">
+                                <span class="stage-text" id="main-progress-stage" style="font-weight: 600; color: var(--text-primary);">Queueing...</span>
+                                <span class="percentage-text" id="main-progress-percent" style="font-weight: 700; color: var(--color-primary);">0%</span>
+                            </div>
+                        </div>
+
+                        <div class="stage-steps" id="main-stage-steps" style="display: flex; justify-content: center; gap: 40px; width: 100%; max-width: 500px; position: relative; padding-top: 10px;">
+                            <div class="step-item" id="main-step-upload" style="width: 70px;">
+                                <div class="step-bullet" style="width: 36px; height: 36px; font-size: 14px;"><i class="fa-solid fa-upload"></i></div>
+                                <div class="step-label" style="font-size: 10px;">Upload</div>
+                            </div>
+                            <div class="step-item" id="main-step-classify" style="width: 70px;">
+                                <div class="step-bullet" style="width: 36px; height: 36px; font-size: 14px;"><i class="fa-solid fa-magnifying-glass"></i></div>
+                                <div class="step-label" style="font-size: 10px;">Classify</div>
+                            </div>
+                            <div class="step-item" id="main-step-extract" style="width: 70px;">
+                                <div class="step-bullet" style="width: 36px; height: 36px; font-size: 14px;"><i class="fa-solid fa-microchip"></i></div>
+                                <div class="step-label" style="font-size: 10px;">AI Extract</div>
+                            </div>
+                            <div class="step-item" id="main-step-reconcile" style="width: 70px;">
+                                <div class="step-bullet" style="width: 36px; height: 36px; font-size: 14px;"><i class="fa-solid fa-code-compare"></i></div>
+                                <div class="step-label" style="font-size: 10px;">Reconcile</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="results-wrapper" id="active-job-results" style="display: none;">
+                        <!-- Job Header -->
+                        <div class="results-header-card">
+                            <div class="job-info-block">
+                                <h3 id="result-project-name">Project Name</h3>
+                                <div class="job-meta-row">
+                                    <span id="result-job-id"><i class="fa-solid fa-hashtag"></i> Job ID</span>
+                                    <span id="result-project-type"><i class="fa-solid fa-building"></i> Single Dwelling</span>
+                                    <span id="result-timestamp"><i class="fa-solid fa-clock"></i> Date</span>
+                                </div>
+                            </div>
+                            
+                            <div class="action-block">
+                                <a href="#" class="btn btn-success btn-large" id="download-excel-btn" download>
+                                    <i class="fa-solid fa-file-excel"></i> Download Takeoff Excel
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- Section 1: Detected Documents -->
+                        <div class="detected-docs-section" style="margin-bottom: 24px; display: flex; gap: 16px; align-items: center; background: rgba(0,0,0,0.2); padding: 12px 20px; border-radius: 8px; border: 1px solid var(--border-glass);">
+                            <h4 style="margin: 0; font-family: var(--font-heading); color: var(--text-light); font-size: 14px;">Detected Documents:</h4>
+                            <div id="doc-checklist" style="display: flex; gap: 16px; font-size: 14px;">
+                                <span id="doc-plans" style="color: var(--text-muted);"><i class="fa-solid fa-circle-xmark"></i> Plans</span>
+                                <span id="doc-nathers" style="color: var(--text-muted);"><i class="fa-solid fa-circle-xmark"></i> NatHERS</span>
+                                <span id="doc-basix" style="color: var(--text-muted);"><i class="fa-solid fa-circle-xmark"></i> BASIX</span>
+                                <span id="doc-colour" style="color: var(--text-muted);"><i class="fa-solid fa-circle-xmark"></i> Colour Schedule</span>
+                            </div>
+                        </div>
+
+                        <!-- Statistics Grid -->
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-icon metric-icon-blue"><i class="fa-solid fa-border-all"></i></div>
+                                <div class="metric-data">
+                                    <span class="metric-value" id="metric-windows-found">0</span>
+                                    <span class="metric-label">Windows Found</span>
+                                </div>
+                            </div>
+
+                            <div class="metric-card">
+                                <div class="metric-icon metric-icon-blue"><i class="fa-solid fa-door-open"></i></div>
+                                <div class="metric-data">
+                                    <span class="metric-value" id="metric-doors-found">0</span>
+                                    <span class="metric-label">Doors Found</span>
+                                </div>
+                            </div>
+                            
+                            <div class="metric-card">
+                                <div class="metric-icon metric-icon-orange"><i class="fa-solid fa-file-pdf"></i></div>
+                                <div class="metric-data">
+                                    <span class="metric-value" id="metric-pages-processed">0</span>
+                                    <span class="metric-label">Pages Processed</span>
+                                </div>
+                            </div>
+                            
+                            <div class="metric-card" id="flags-metric-card">
+                                <div class="metric-icon metric-icon-orange"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                                <div class="metric-data">
+                                    <span class="metric-value" id="metric-total-flags">0</span>
+                                    <span class="metric-label">Consistency Flags</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Rejection Warning Banner -->
+                        <div class="alert alert-danger" id="rejection-banner" style="display: none;">
+                            <div class="alert-icon"><i class="fa-solid fa-circle-xmark"></i></div>
+                            <div class="alert-content">
+                                <h4>Takeoff Rejected by Quality Controls</h4>
+                                <p id="rejection-msg">Rejection Reason</p>
+                            </div>
+                        </div>
+
+                        <!-- Tab Control Workspace -->
+                        <div class="tab-container">
+                            <div class="tab-headers">
+                                <button class="tab-btn active" data-tab="takeoff-table-tab">
+                                    <i class="fa-solid fa-list-check"></i> Takeoff Schedule
+                                </button>
+                                <button class="tab-btn" data-tab="consistency-report-tab" id="tab-btn-flags">
+                                    <i class="fa-solid fa-shield-halved"></i> Consistency Report
+                                    <span class="tab-badge" id="flags-tab-badge">0</span>
+                                </button>
+                                <button class="tab-btn" data-tab="raw-json-tab" id="tab-btn-json">
+                                    <i class="fa-solid fa-code"></i> Raw JSON Output
+                                </button>
+                            </div>
+                            
+                            <div class="tab-contents">
+                                <!-- Tab Content 1: Takeoff Schedule -->
+                                <div class="tab-pane active" id="takeoff-table-tab">
+                                    <div class="table-controls" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 16px;">
+                                        <div style="flex: 1;">
+                                            <input type="text" id="takeoff-filter" placeholder="Filter rows..." style="padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: white; width: 100%; max-width: 300px;">
+                                        </div>
+                                        <div style="font-size: 13px; color: var(--text-muted);">
+                                            Total Records: <span id="takeoff-records-count" style="font-weight: bold; color: white;">0</span>
+                                        </div>
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="takeoff-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Location</th>
+                                                    <th>Opening ID</th>
+                                                    <th>Type</th>
+                                                    <th class="text-right">Width</th>
+                                                    <th class="text-right">Height</th>
+                                                    <th>Orient.</th>
+                                                    <th>Glazing</th>
+                                                    <th>U Value</th>
+                                                    <th>SHGC</th>
+                                                    <th>Frame</th>
+                                                    <th class="text-right">Qty</th>
+                                                    <th>Confidence</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="takeoff-table-body">
+                                                <!-- Row data dynamic -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="table-legend">
+                                        <span class="legend-item"><span class="legend-color legend-window"></span> Window</span>
+                                        <span class="legend-item"><span class="legend-color legend-door"></span> Door</span>
+                                        <span class="legend-item"><span class="legend-color legend-bifold"></span> Bi-fold/Stacker</span>
+                                        <span class="legend-item"><span class="legend-color legend-louvre"></span> Louvre</span>
+                                        <span class="legend-item"><span class="legend-color legend-low-conf"></span> Low Confidence (< 70%)</span>
+                                    </div>
+                                </div>
+
+                                <!-- Tab Content 2: Consistency Report -->
+                                <div class="tab-pane" id="consistency-report-tab">
+                                    <div class="table-responsive">
+                                        <table class="takeoff-table" id="flags-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Flag Type</th>
+                                                    <th>Opening ID</th>
+                                                    <th>Description</th>
+                                                    <th>Severity</th>
+                                                    <th>Source</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="consistency-flags-table-body">
+                                                <!-- Flags rows dynamic -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                
+                                <!-- Tab Content 3: Raw JSON -->
+                                <div class="tab-pane" id="raw-json-tab">
+                                    <div class="code-container" style="background: #1e1e1e; padding: 16px; border-radius: 8px; overflow-y: auto; max-height: 500px;">
+                                        <pre><code id="raw-json-content" style="color: #d4d4d4; font-family: monospace; font-size: 13px;"></code></pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Upload Modal -->
+    <div id="upload-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <button id="close-modal-btn" class="modal-close"><i class="fa-solid fa-xmark"></i></button>
+            <div class="control-panel">
+                <!-- Upload Card -->
+                <div class="card glass-card">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-file-arrow-up"></i> Upload PDF Submission</h3>
+                    </div>
+                    <div class="card-body">
+                        <form id="upload-form">
+                            <div class="form-group">
+                                <label for="project-name">Project Name / Reference</label>
+                                <input type="text" id="project-name" name="project_name" placeholder="Leave empty for auto-generated name">
+                            </div>
+                            <div class="form-group">
+                                <label for="project-type">Project Layout Pattern</label>
+                                <select id="project-type" name="project_type">
+                                    <option value="Single Dwelling">Single Dwelling (Standard)</option>
+                                    <option value="Duplex">Duplex (Separate Schedules)</option>
+                                    <option value="Multi-unit">Multi-unit Development</option>
+                                </select>
+                            </div>
+                            
+                            <div class="upload-dropzone" id="dropzone">
+                                <i class="fa-solid fa-cloud-arrow-up dropzone-icon"></i>
+                                <p class="dropzone-text">Drag & drop plan & certificate PDFs here</p>
+                                <p class="dropzone-subtext">Supports Plans, NatHERS, and BASIX</p>
+                                <button type="button" class="btn btn-primary" id="browse-btn">Browse Files</button>
+                                <input type="file" id="file-input" name="files" multiple accept=".pdf" style="display: none;">
+                            </div>
+                            
+                            <div class="selected-files-container" id="selected-files-list" style="display: none;">
+                                <h4>Selected Files:</h4>
+                                <ul class="file-list"></ul>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success btn-block" id="process-btn" disabled>
+                                <i class="fa-solid fa-play"></i> Start Automated Takeoff
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Progress Tracking Card -->
+                <div class="card glass-card" id="progress-card" style="display: none;">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-gears fa-spin"></i> Processing Takeoff</h3>
+                        <span class="job-id-badge" id="active-job-id">FNX-YYYYMMDD-001</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="progress-container">
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill" id="progress-fill" style="width: 0%;"></div>
+                            </div>
+                            <div class="progress-meta">
+                                <span class="stage-text" id="progress-stage">Queueing...</span>
+                                <span class="percentage-text" id="progress-percent">0%</span>
+                            </div>
+                        </div>
+                        
+                        <div class="stage-steps">
+                            <div class="step-item active" id="step-upload">
+                                <div class="step-bullet"><i class="fa-solid fa-upload"></i></div>
+                                <div class="step-label">Upload</div>
+                            </div>
+                            <div class="step-item" id="step-classify">
+                                <div class="step-bullet"><i class="fa-solid fa-magnifying-glass"></i></div>
+                                <div class="step-label">Classify</div>
+                            </div>
+                            <div class="step-item" id="step-extract">
+                                <div class="step-bullet"><i class="fa-solid fa-microchip"></i></div>
+                                <div class="step-label">AI Extract</div>
+                            </div>
+                            <div class="step-item" id="step-reconcile">
+                                <div class="step-bullet"><i class="fa-solid fa-code-compare"></i></div>
+                                <div class="step-label">Reconcile</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
