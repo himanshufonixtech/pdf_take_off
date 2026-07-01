@@ -63,12 +63,12 @@ print("Configuration loaded. Uploads directory:", UPLOADS_DIR)
 # Number of sample pages to inspect when classifying a PDF (keeps work fast)
 CLASSIFY_SAMPLE_PAGES = int(os.getenv("CLASSIFY_SAMPLE_PAGES", "3"))
 # Enable parallel classification of files in a single takeoff job
-PARALLEL_CLASSIFY = os.getenv("PARALLEL_CLASSIFY", "true").lower() in ("1", "true", "yes")
+PARALLEL_CLASSIFY = os.getenv("PARALLEL_CLASSIFY", "false").lower() in ("1", "true", "yes")
 # Maximum workers used for parallel classification
 MAX_CLASSIFY_WORKERS = int(os.getenv("MAX_CLASSIFY_WORKERS", "4"))
 
 # Extraction parallelism tuning
 # Enable parallel extraction of files (plans/nathers/basix)
-PARALLEL_EXTRACTION = os.getenv("PARALLEL_EXTRACTION", "true").lower() in ("1", "true", "yes")
+PARALLEL_EXTRACTION = os.getenv("PARALLEL_EXTRACTION", "false").lower() in ("1", "true", "yes")
 # Maximum workers used for parallel extraction
 MAX_EXTRACTION_WORKERS = int(os.getenv("MAX_EXTRACTION_WORKERS", "4"))
