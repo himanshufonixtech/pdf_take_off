@@ -515,7 +515,7 @@ document.addEventListener("DOMContentLoaded", () => {
         resultTimestamp.innerHTML = `<i class="fa-solid fa-clock"></i> ${date.toLocaleDateString()}`;
         
         // Excel download configuration
-        if (job.excel_url && (job.status === "Completed" || job.status === "Review Required")) {
+        if (job.excel_url && (job.status === "Completed" || job.status === "Review Required" || job.status === "Rejected")) {
             downloadExcelBtn.href = job.excel_url;
             downloadExcelBtn.download = job.excel_url.split('/').pop() || "Takeoff_Results.xlsx";
             downloadExcelBtn.classList.remove("disabled");

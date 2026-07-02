@@ -306,23 +306,19 @@ def process_takeoff_background(job_id: str):
         job["plan_glazing_area"] = recon_results.get("plan_glazing_area", 0.0)
         job["cert_glazing_area"] = recon_results.get("cert_glazing_area")
         
-        # Step 4: Excel Generation
+        # Step 4: Excel Generation (Always generate Excel sheet, even if rejected, so it remains accessible for reference)
+        safe_project = job['project_name'].replace(' ', '_').replace('/', '-')
+        excel_filename = f"{job_id}_{safe_project}.xlsx"
+        excel_path = os.path.join(config.OUTPUTS_DIR, excel_filename)
+        
+        generate_takeoff_excel(recon_results, excel_path, job["project_name"], job["project_type"])
+        job["excel_url"] = f"/api/download/{excel_filename}"
+        
         if recon_results["is_rejected"]:
             job["status"] = "Rejected"
             job["stage"] = "Rejected"
             job["progress"] = 100
         else:
-            job["stage"] = "Generating Excel Output"
-            job["progress"] = 90
-            save_jobs_db()
-            
-            safe_project = job['project_name'].replace(' ', '_').replace('/', '-')
-            excel_filename = f"{job_id}_{safe_project}.xlsx"
-            excel_path = os.path.join(config.OUTPUTS_DIR, excel_filename)
-            
-            generate_takeoff_excel(recon_results, excel_path, job["project_name"], job["project_type"])
-            
-            job["excel_url"] = f"/api/download/{excel_filename}"
             # FIX #8: Show REVIEW REQUIRED as a distinct status
             if recon_results.get("review_required"):
                 job["status"] = "Review Required"
