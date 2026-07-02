@@ -82,16 +82,32 @@ def call_openai_chat_concurrent(requests_payloads: list) -> list:
 # FIX #4 & #5: Opaque / non-glazing door exclusion keywords
 # Garage doors (BRD Section 4.2: explicitly OUT OF SCOPE)
 # ---------------------------------------------------------------------------
-OPAQUE_DOOR_KEYWORDS = [
-    "garage", "sectional", "panel lift", "roller door", "roller",
-    "solid core", "solid timber", "solid door", "opaque door",
-    "csi classic", "panel door", "hinged solid"
-]
-
 def _is_opaque_door(tag: str, w_type: str, location: str) -> bool:
     """Returns True if this opening is an opaque/garage door that should be excluded."""
-    combined = f"{tag} {w_type} {location}".lower()
-    return any(kw in combined for kw in OPAQUE_DOOR_KEYWORDS)
+    tag_lower = str(tag).lower()
+    type_lower = str(w_type).lower()
+    loc_lower = str(location).lower()
+    
+    # Never exclude windows
+    if tag_lower.startswith("w") and any(c.isdigit() for c in tag_lower[1:3]):
+        return False
+    if "window" in type_lower:
+        return False
+        
+    # Exclude if it represents a garage door or roller/sectional door
+    combined = f"{tag_lower} {type_lower} {loc_lower}"
+    opaque_kws = [
+        "garage door", "sectional", "panel lift", "panelift", "roller door", 
+        "solid core", "solid timber", "solid door", "opaque door",
+        "csi classic", "panel door", "hinged solid", "panelift door"
+    ]
+    
+    # If the location is garage and type contains "door" or "sectional" etc.
+    if "garage" in loc_lower:
+        if "door" in type_lower or "door" in tag_lower or any(k in combined for k in ["sectional", "panel lift", "panelift", "roller"]):
+            return True
+            
+    return any(kw in combined for kw in opaque_kws)
 
 
 # ---------------------------------------------------------------------------
@@ -643,45 +659,51 @@ def extract_plans_data(file_path: str, nathers_tags: set = None) -> list:
         return []
 
     prompt = """Analyze the floor plan text from page {page_num} of the architectural plans.
-Identify ALL windows and GLAZED doors (e.g., sliding doors, bifold doors, stacker doors, French doors with glazing, etc.).
+Identify ALL windows and external doors (e.g., sliding doors, bifold doors, stacker doors, French doors, entry doors, laundry doors, etc.).
 
-AUSTRALIAN WINDOW CODES CONVENTION:
+AUSTRALIAN WINDOW & DOOR CODES CONVENTION:
 In Australian construction drawings, openings are often labeled with a code representing their dimensions and operability rather than a simple sequential tag (like W1). For example:
 - "18-09AAW-DG-LOW E" or "DH1809" or "1809" represents a window of Height = 1800 mm and Width = 900 mm.
 - "15-18" or "AS1515" or "1518" represents Height = 1500 mm and Width = 1800 mm.
 - "21-18ASD-DG" or "SD2118" represents Height = 2100 mm and Width = 1800 mm.
+- "FG0318" or "0318" represents a Fixed Glazing window of Height = 300 mm and Width = 1800 mm.
 - "1806", "1118", "1115", "1006", "1105", "1117", "1818", "1124" are 4-digit window size tags. The first two digits represent the height in decimeters (e.g. 18 = 1800mm, 11 = 1100mm, 10 = 1000mm) and the next two represent the width in decimeters (e.g. 06 = 600mm, 18 = 1800mm, 15 = 1500mm, 05 = 500mm, 17 = 1700mm, 24 = 2400mm).
-If such code is the main label identifying the window, extract the code itself as the "tag" (e.g. "AS0912", "1806", "1118", "1115", "1006", "15-18AAW") and parse the correct height and width in mm from it. Do NOT skip them as general wall dimensions!
+- "820d" or "820" or "820 door" or "820SD" represents standard door width 820mm and standard height 2040mm.
+- "720d" or "720" represents door width 720mm and height 2040mm.
+- "920d" or "920" represents door width 920mm and height 2040mm.
+If such code is the main label identifying the window/door, extract the code itself as the "tag" (e.g. "AS0912", "1806", "1118", "1115", "1006", "15-18AAW", "820d", "FG0318") and parse the correct height and width in mm from it. Do NOT skip them as general wall dimensions!
 
 PREFER SIZE CODES OR STANDARD TAGS CONSISTENTLY:
-If the drawing layout represents windows using catalog size codes (like DH1809, AS0912, AS1515, SD2124), ALWAYS extract the size code itself as the "tag" of the opening (e.g. "DH1809", "AS1515"). If standard sequential tags (like W1, W2) are also present on the page (for example in a symbol legend or a notes box), DO NOT mix them. Extract the main layout identifier (the size code) for the layout drawings.
+If the drawing layout represents windows/doors using catalog size codes (like DH1809, AS0912, AS1515, SD2124, 820d, FG0318), ALWAYS extract the size code itself as the "tag" of the opening (e.g. "DH1809", "AS1515", "820d", "FG0318"). If standard sequential tags (like W1, W2, D1, D2) are also present on the page (for example in a symbol legend or a notes box), DO NOT mix them. Extract the main layout identifier (the size code) for the layout drawings.
 
-CRITICAL EXCLUSIONS:
-- DO NOT include garage doors, sectional doors, solid/opaque doors, or roller doors.
-- DO NOT include standard internal passage doors, hinged timber/wood doors, bedroom doors, toilet/bathroom doors, linen doors, or wardrobe doors. These are typically solid doors labeled with dimensions like "2040H 820W" or "2040H 720W" and DO NOT have window/glazed door tag numbers.
+CRITICAL INCLUSIONS & EXCLUSIONS:
+- DO NOT include garage sectional doors, roller doors, or panel lift doors (these are out of scope).
+- DO NOT include standard INTERNAL passage doors, bedroom doors, toilet/bathroom doors, linen doors, or wardrobe doors (e.g., internal "720d" or "820d" doors).
+- DO include EXTERNAL hinged doors (such as entry doors, laundry exit doors, porch/verandah exit doors, balcony doors) that are on the outer perimeter of the building and lead directly to the outside, even if they are labeled with size codes (like "820d", "820", "D1", "D2", "CSD").
+- CRITICAL EXTERNAL DOOR RULE: Only extract "820d" or "820" doors if they are located at an external wall leading directly outside (e.g., Entry door, Laundry exit door, Porch/verandah exit door). DO NOT extract internal "820d" or "820" passage doors for bedrooms, bathrooms, WC, ensuites, robes, or other internal passage locations.
 - DO NOT extract openings from stamp notes, drawing title block labels, legends, or text notes that list general window specifications or refer to other certificates (e.g., "NatHERS Stamped Plans: W1, W2..." or general specifications table). Extract openings ONLY from the actual room labels and floor plan drawings layout.
 
-Extract every window and external glazed door label you see in the text. 
+Extract every window and external door label you see in the text. 
 Typically, each opening label consists of:
 1. A product or design code prefix (e.g., DS1827, DS1806, DSD2115, DAD2121, DA2112SP).
-2. The window/door tag itself (e.g., W1, W2, W3, ..., W11, D1, D2, AS0912, 1806, 15-18AAW, 2136ALSD).
-3. The dimensions (e.g., 1800H x 2650W or 2057H x 1210W).
+2. The window/door tag itself (e.g., W1, W2, W3, ..., W11, D1, D2, AS0912, 1806, 15-18AAW, 2136ALSD, 820d).
+3. The dimensions (e.g., 1800H x 2650W or 2057H x 1210W or 2040H x 820W).
 
 Return a JSON object with a key "openings" containing a list. Return ONLY valid JSON.
 
 Fields per object:
-- tag: the exact window/door tag label or size/type code (e.g. "W1", "W2", "W10", "D1", "D2", "AS0912", "1806", "15-18AAW", "2136ALSD"). Make sure to use the tag or size code (like AS0912) and NOT the product code (like DS1827) if they are separate.
-- height: height in mm as integer (e.g., 1800, 2057). If the tag or label contains the size code (e.g., "1806" or "DH1809" or "15-18"), extract the height from it (1800, 1800, 1500).
-- width: width in mm as integer (e.g., 2650, 1210). If the tag or label contains the size code (e.g., "1806" or "DH1809" or "15-18"), extract the width from it (600, 900, 1800).
-- type: opening type (e.g. "sliding", "awning", "fixed", "sliding door", "bifold", "stacker door", "louvre", "hinged door")
+- tag: the exact window/door tag label or size/type code (e.g. "W1", "W2", "W10", "D1", "D2", "AS0912", "1806", "15-18AAW", "2136ALSD", "820d"). Make sure to use the tag or size code (like AS0912, 820d) and NOT the product code (like DS1827) if they are separate.
+- height: height in mm as integer (e.g., 1800, 2057, 2040). If the tag or label contains the size code (e.g., "1806" or "DH1809" or "15-18" or "820d"), extract the height from it (1800, 1800, 1500, 2040).
+- width: width in mm as integer (e.g., 2650, 1210, 820). If the tag or label contains the size code (e.g., "1806" or "DH1809" or "15-18" or "820d"), extract the width from it (600, 900, 1800, 820).
+- type: opening type (e.g. "sliding", "awning", "fixed", "sliding door", "bifold", "stacker door", "louvre", "hinged door", "french door")
 - quantity: quantity (integer, default 1)
 - location: room name if you can guess it from proximity, otherwise make a best estimate or set to "TBD". Do NOT omit the opening if location is unclear.
 - frame: frame material if mentioned for the window/door specifically (e.g. "Aluminium", "Timber"). CRITICAL: DO NOT extract the wall framing material (such as wall timber studs or "FRAME TYPE: Timber" from the construction notes) as the window frame material. If the window frame is not explicitly mentioned, return null.
 - glazing: glass type if mentioned
 - src_ref: "Plans p.{page_num}"
 
-CRITICAL: Only extract openings that actually have a designated window or glazed door tag or size code (like W1-W11, D1, D2, AS0912, 1806, 15-18) in the plans. Do NOT invent, reuse, or hallucinate tags (like W1, W2) for untagged internal doors or openings. If no standard W/D tags are present, extract the size code label (e.g. "AS0912", "1806") as the tag.
-CRITICAL QUANTITY & DUPLICATE INSTANCE RULE: The page text often has multiple instances of the same window tag or size code (e.g., "1806" or "DH1809" appearing multiple times in different parts of the text). You MUST extract EVERY SINGLE INSTANCE as a separate item in the "openings" list. If a tag appears 4 times in the page text, you MUST return 4 separate items in your list, each with quantity=1 and its correct room/location. Do NOT group them or collapse them into a single item."""
+CRITICAL: Only extract openings that actually have a designated window or door tag or size code (like W1-W11, D1, D2, AS0912, 1806, 15-18, 820d) in the plans. Do NOT invent, reuse, or hallucinate tags (like W1, W2) for untagged internal doors or openings. If no standard W/D tags are present, extract the size code label (e.g. "AS0912", "1806", "820d") as the tag.
+CRITICAL QUANTITY & DUPLICATE INSTANCE RULE: The page text often has multiple instances of the same window tag or size code (e.g., "1806" or "DH1809" or "820d" appearing multiple times in different parts of the text). You MUST extract EVERY SINGLE INSTANCE as a separate item in the "openings" list. If a tag appears 4 times in the page text, you MUST return 4 separate items in your list, each with quantity=1 and its correct room/location. Do NOT group them or collapse them into a single item."""
 
     payloads = []
     payload_metadata = []

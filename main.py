@@ -293,8 +293,17 @@ def process_takeoff_background(job_id: str):
         save_jobs_db()
         
         has_plans_file = any(f.get("type") == "Plans" for f in job.get("files", []))
-        has_plans = has_plans_file and (len(plans_windows) > 0)
-        recon_results = reconcile_takeoff(plans_windows, nathers_windows, basix_data, has_plans=has_plans)
+        
+        # We only consider plans valid for cross-checking if we extracted a reasonable number of openings
+        has_plans = False
+        if has_plans_file and len(plans_windows) >= 3:
+            if not nathers_windows or len(plans_windows) >= 0.3 * len(nathers_windows):
+                has_plans = True
+                
+        recon_results = reconcile_takeoff(
+            plans_windows, nathers_windows, basix_data, 
+            has_plans=has_plans, has_plans_file=has_plans_file
+        )
         
         job["takeoff_rows"]      = recon_results["rows"]
         job["flags"]             = recon_results["flags"]
