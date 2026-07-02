@@ -87,12 +87,255 @@ def _plan_value_is_asserted(val: str, defaults: set) -> bool:
     return val.strip().lower() not in defaults
 
 
-def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: dict) -> dict:
+def determine_frame_material(desc: str) -> str:
+    """Derives frame material from product description, defaulting to Aluminium."""
+    if not desc:
+        return "Aluminium"
+    desc_lower = desc.lower()
+    if any(k in desc_lower for k in ["timber", "wood", "cedar", "mdf"]):
+        return "Timber"
+    if any(k in desc_lower for k in ["upvc", "pvc", "vinyl"]):
+        return "uPVC"
+    return "Aluminium"
+
+
+def normalize_glazing_category(glazing_str: str) -> dict:
+    """Extract features from glazing description to compare semantically."""
+    if not glazing_str:
+        return {"type": "unknown", "low_e": False, "obscure": False, "laminated": False}
+    s = glazing_str.lower()
+    g_type = "unknown"
+    if "triple" in s or " tg " in s or "/tg/" in s:
+        g_type = "triple"
+    elif "double" in s or " dg " in s or "/dg/" in s or "dg" in s or "/10/" in s or "/12/" in s or "/8/" in s or "/6/" in s or "/9/" in s:
+        g_type = "double"
+    elif "single" in s or " sg " in s or "/sg/" in s or "sg" in s:
+        g_type = "single"
+
+    low_e = "low e" in s or "low-e" in s or "lowe" in s or "cpclr" in s or "cpgry" in s or "smartglass" in s or "comfort" in s
+    obscure = "obscure" in s or "obs" in s or "frosted" in s or "translucent" in s
+    laminated = "lam" in s or "laminated" in s
+
+    return {"type": g_type, "low_e": low_e, "obscure": obscure, "laminated": laminated}
+
+
+def glazing_mismatch(p_glazing: str, n_glazing: str) -> bool:
+    """Check if plan and NatHERS glazing specifications mismatch semantically."""
+    if not p_glazing or not n_glazing:
+        return False
+    p_cat = normalize_glazing_category(p_glazing)
+    n_cat = normalize_glazing_category(n_glazing)
+    if p_cat["type"] != "unknown" and n_cat["type"] != "unknown":
+        if p_cat["type"] != n_cat["type"]:
+            return True
+    if p_cat["low_e"] and not n_cat["low_e"]:
+        return True
+    if p_cat["obscure"] and not n_cat["obscure"]:
+        return True
+    if p_cat["laminated"] and not n_cat["laminated"]:
+        return True
+    return False
+
+
+def classify_opening_type(matched_type: str, height: int, tag: str) -> str:
+    """Classify the opening type based on operability, dimensions, and tags."""
+    type_lower = matched_type.lower() if matched_type else ""
+    tag_lower = str(tag).lower() if tag else ""
+    if "louvre" in type_lower:
+        return "Louvre"
+    if "bifold" in type_lower or "stacker" in type_lower or "sd" in tag_lower or "alsd" in tag_lower or "bifold" in tag_lower:
+        return "Bi-fold/Stacker Door"
+    
+    is_door = False
+    if "door" in type_lower:
+        is_door = True
+    elif height and height >= 2000:
+        is_door = True
+    elif "sd" in type_lower or "d" in tag_lower:
+        import re
+        if re.match(r'^d\d+', tag_lower):
+            is_door = True
+
+    if is_door:
+        return "Door"
+    return "Window"
+
+
+def orientations_match(o1: str, o2: str) -> bool:
+    """Check if orientations match."""
+    if not o1 or not o2:
+        return True
+    return o1.strip().upper() == o2.strip().upper()
+
+
+def types_match(t1: str, t2: str) -> bool:
+    """Check if types match."""
+    if not t1 or not t2:
+        return True
+    t1_norm = t1.lower().replace("_", " ").replace("-", " ").strip()
+    t2_norm = t2.lower().replace("_", " ").replace("-", " ").strip()
+    return t1_norm == t2_norm or t1_norm in t2_norm or t2_norm in t1_norm
+
+
+def calculate_match_score(plan_w: dict, nat_w: dict) -> float:
+    """Calculate the match score between a plan window and a NatHERS window."""
+    p_tag = str(plan_w.get("tag", "")).strip().upper()
+    n_tag = str(nat_w.get("tag", "")).strip().upper()
+    tags_match = (p_tag == n_tag) and p_tag != ""
+
+    ph = plan_w.get("height")
+    pw = plan_w.get("width")
+    nh = nat_w.get("height")
+    nw = nat_w.get("width")
+
+    dim_diff_h = abs(ph - nh) if (ph is not None and nh is not None) else None
+    dim_diff_w = abs(pw - nw) if (pw is not None and nw is not None) else None
+
+    dims_within_tolerance = False
+    if dim_diff_h is not None and dim_diff_w is not None:
+        if dim_diff_h <= 50 and dim_diff_w <= 50:
+            dims_within_tolerance = True
+
+    # If tags don't match, they must have dimensions within tolerance to be paired
+    if not tags_match and not dims_within_tolerance:
+        return 0.0
+
+    score = 0.0
+    if tags_match:
+        score += 100.0
+
+    if dim_diff_h is not None and dim_diff_w is not None:
+        if dim_diff_h <= 5 and dim_diff_w <= 5:
+            score += 60.0
+        elif dim_diff_h <= 50 and dim_diff_w <= 50:
+            score += 45.0
+
+    p_loc = plan_w.get("location", "")
+    n_loc = nat_w.get("location", "")
+    if p_loc and n_loc and locations_match(p_loc, n_loc):
+        score += 30.0
+
+    p_orient = plan_w.get("orientation", "")
+    n_orient = nat_w.get("orientation", "")
+    if p_orient and n_orient and orientations_match(p_orient, n_orient):
+        score += 20.0
+
+    p_type = plan_w.get("type", "")
+    n_type = nat_w.get("type", "")
+    if p_type and n_type and types_match(p_type, n_type):
+        score += 15.0
+
+    return score
+
+
+def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: dict, has_plans: bool = True) -> dict:
     """
     Reconciles window schedules from Plans and NatHERS,
     cross-checks against BASIX, calculates confidence,
     and returns takeoff rows and consistency flags.
     """
+    takeoff_rows = []
+    flags = []
+
+    # 1. Handle No Plans case (D2)
+    if not has_plans:
+        for nat_w in (nathers_windows or []):
+            nat_tag = nat_w.get("tag", "Unknown")
+            nat_loc = nat_w.get("location", "")
+            nat_h = nat_w.get("height")
+            nat_ww = nat_w.get("width")
+            nat_qty = nat_w.get("quantity", 1)
+            nat_type = nat_w.get("type", "window")
+            nat_orient = nat_w.get("orientation", "TBD")
+            nat_glazing = nat_w.get("glazing", "Per NatHERS Schedule")
+            nat_u = nat_w.get("u_value", "N/A")
+            nat_shgc = nat_w.get("shgc", "N/A")
+            nat_frame = nat_w.get("frame_material") or nat_w.get("frame") or "Aluminium"
+            nat_src = nat_w.get("src_ref", "NatHERS")
+
+            opening_type = classify_opening_type(nat_type, nat_h, nat_tag)
+
+            u_shgc_display = ""
+            if nat_u and nat_u != "N/A":
+                u_shgc_display = f"U: {nat_u}"
+            if nat_shgc and nat_shgc != "N/A":
+                u_shgc_display += (" / " if u_shgc_display else "") + f"SHGC: {nat_shgc}"
+            if not u_shgc_display:
+                u_shgc_display = "N/A"
+
+            takeoff_rows.append({
+                "location":     nat_loc,
+                "tag":          nat_tag,
+                "height":       nat_h,
+                "width":        nat_ww,
+                "type":         nat_type,
+                "opening_type": opening_type,
+                "orientation":  nat_orient or "TBD",
+                "glazing":      nat_glazing,
+                "u_value":      nat_u,
+                "shgc":         nat_shgc,
+                "u_shgc":       u_shgc_display,
+                "frame":        nat_frame,
+                "quantity":     nat_qty,
+                "confidence":   100.0,
+                "src_ref":      nat_src
+            })
+
+        flags.append({
+            "flag_type": "info",
+            "item_ref": "Plans",
+            "category": "Info",
+            "opening_id": "Plans",
+            "description": "No plan documents were supplied in this submission. Glazing takeoff is based entirely on the NatHERS certificate schedule.",
+            "severity": "Low"
+        })
+
+        try:
+            total_plan_area = sum(
+                calculate_window_area(r["height"], r["width"], r["quantity"])
+                for r in takeoff_rows
+                if r.get("height") and r.get("width")
+            )
+        except Exception:
+            total_plan_area = 0.0
+
+        basix_area = basix_data.get("total_glazing_area")
+        if basix_area and total_plan_area > 0:
+            discrepancy_pct = abs(total_plan_area - basix_area) / float(basix_area) * 100.0
+            if discrepancy_pct > 10.0:
+                direction = "over-counting" if total_plan_area > basix_area else "under-counting"
+                flags.append({
+                    "flag_type": "basix_aggregate_mismatch",
+                    "item_ref": "BASIX Glazing Total",
+                    "category": _flag_category_label("basix_aggregate_mismatch"),
+                    "opening_id": "BASIX Glazing",
+                    "description": (
+                        f"Extracted plan glazing area ({total_plan_area:.2f} m²) differs from "
+                        f"BASIX certificate total ({basix_area:.2f} m²) by {discrepancy_pct:.1f}%. "
+                        f"The BASIX/NatHERS certificate value ({basix_area:.2f} m²) is the verified anchor. "
+                        f"Review the plan extraction for {direction} — possible phantom openings, "
+                        f"excluded door types, or scanned-page misreads."
+                    ),
+                    "severity": "High"
+                })
+
+        critical_flags = [f for f in flags if f.get("severity") in ("High", "Medium")]
+        review_required = bool(critical_flags)
+        review_reason = f"Job has {len(critical_flags)} critical consistency flags (High/Medium severity) requiring manual review." if review_required else ""
+
+        return {
+            "rows":               takeoff_rows,
+            "flags":              flags,
+            "overall_confidence": 100.0,
+            "is_rejected":        False,
+            "rejection_reason":   "",
+            "review_required":    review_required,
+            "review_reason":      review_reason,
+            "basix_details":      basix_data,
+            "plan_glazing_area":  total_plan_area,
+            "cert_glazing_area":  basix_area,
+        }
+
     # Expand plans and NatHERS windows by quantity to match individual instances
     expanded_plans = []
     for pw in (plans_windows or []):
@@ -125,17 +368,29 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
     plans_windows = expanded_plans
     nathers_windows = expanded_nathers
 
-    takeoff_rows = []
-    flags = []
+    # 2. Perform Scoring-Based Matching (D3)
+    candidate_pairs = []
+    for i, plan_w in enumerate(plans_windows):
+        for j, nat_w in enumerate(nathers_windows):
+            score = calculate_match_score(plan_w, nat_w)
+            if score > 0:
+                candidate_pairs.append((i, j, score))
 
+    candidate_pairs.sort(key=lambda x: x[2], reverse=True)
+
+    matched_plans_indices = set()
     matched_nathers_indices = set()
+    plan_to_nathers_match = {}
 
-    def orientations_match(o1, o2):
-        if not o1 or not o2:
-            return True
-        return o1.strip().upper() == o2.strip().upper()
+    for i, j, score in candidate_pairs:
+        if i in matched_plans_indices or j in matched_nathers_indices:
+            continue
+        matched_plans_indices.add(i)
+        matched_nathers_indices.add(j)
+        plan_to_nathers_match[i] = j
 
-    for plan_w in plans_windows:
+    # 3. Process matches and plan-only windows
+    for i, plan_w in enumerate(plans_windows):
         tag      = plan_w.get("tag", "Unknown")
         loc      = plan_w.get("location", "")
         h        = plan_w.get("height")
@@ -147,90 +402,40 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         glazing  = plan_w.get("glazing")
         src_ref  = plan_w.get("src_ref", "Plans")
 
-        # Match strategy 1: By tag
-        match_idx = -1
-        for j, nat_w in enumerate(nathers_windows):
-            if j in matched_nathers_indices:
-                continue
-            if str(nat_w.get("tag", "")).strip().upper() == str(tag).strip().upper():
-                match_idx = j
-                break
-
-        # Match strategy 1.5: By location and dimensions (within 50 mm)
-        if match_idx == -1:
-            for j, nat_w in enumerate(nathers_windows):
-                if j in matched_nathers_indices:
-                    continue
-                nh = nat_w.get("height")
-                nw = nat_w.get("width")
-                nat_loc = nat_w.get("location", "")
-                if h and w and nh and nw and locations_match(loc, nat_loc):
-                    if abs(h - nh) <= 50 and abs(w - nw) <= 50:
-                        match_idx = j
-                        break
-
-        # Match strategy 2: By dimensions (within 50 mm)
-        if match_idx == -1:
-            for j, nat_w in enumerate(nathers_windows):
-                if j in matched_nathers_indices:
-                    continue
-                nh = nat_w.get("height")
-                nw = nat_w.get("width")
-                if h and w and nh and nw:
-                    if abs(h - nh) <= 50 and abs(w - nw) <= 50:
-                        match_idx = j
-                        break
-
-        # Match strategy 3: Area-based greedy match (up to 25% diff)
-        if match_idx == -1:
-            best_idx = -1
-            best_diff = None
-            try:
-                plan_area = (h * w) if h and w else None
-            except Exception:
-                plan_area = None
-            if plan_area:
-                for j, nat_w in enumerate(nathers_windows):
-                    if j in matched_nathers_indices:
-                        continue
-                    nh = nat_w.get("height")
-                    nw = nat_w.get("width")
-                    if not nh or not nw:
-                        continue
-                    nat_area = nh * nw
-                    diff = abs(plan_area - nat_area) / float(nat_area) if nat_area else 1.0
-                    if diff <= 0.25:
-                        if best_diff is None or diff < best_diff:
-                            best_diff = diff
-                            best_idx = j
-            if best_idx != -1:
-                match_idx = best_idx
+        match_idx = plan_to_nathers_match.get(i, -1)
 
         row_confidence  = 100.0
         matched_glazing = glazing
         matched_frame   = frame
         matched_u_value = ""
         matched_shgc    = ""
-        matched_location = loc  # FIX #1: will be overridden by NatHERS location when matched
+        matched_location = loc
         matched_type    = w_type
+        matched_h       = h
+        matched_w       = w
 
         if match_idx != -1:
-            matched_nathers_indices.add(match_idx)
             nat_w = nathers_windows[match_idx]
 
-            # FIX #1: Use NatHERS room label as authoritative location
+            # Use NatHERS room label as authoritative location
             nat_location = nat_w.get("location", "")
             if nat_location:
                 matched_location = nat_location
 
-            # Authoritative window type from NatHERS (elevations/certificates are source of truth for operability)
+            # Authoritative window type from NatHERS
             nat_type = nat_w.get("type")
             if nat_type:
                 matched_type = nat_type
 
-            # 1. Dimension check
+            # D9: Prefer certificate dimensions
             nh = nat_w.get("height")
             nw = nat_w.get("width")
+            if nh:
+                matched_h = nh
+            if nw:
+                matched_w = nw
+
+            # Dimension check
             if h and w and nh and nw:
                 if abs(h - nh) > 5 or abs(w - nw) > 5:
                     flags.append({
@@ -243,7 +448,7 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
                     })
                     row_confidence -= 20.0
 
-            # 2. Orientation check
+            # Orientation check
             n_orient = nat_w.get("orientation")
             if orientation and n_orient and not orientations_match(orientation, n_orient):
                 flags.append({
@@ -258,67 +463,55 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             elif not orientation and n_orient:
                 orientation = n_orient
 
-            # FIX #7: Only flag type mismatch if the plan value is a real assertion
-            # (not a hardcoded default like "fixed" or "window")
-            n_type = nat_w.get("type")
-            w_type_norm = w_type.lower().replace("_", " ").replace("-", " ").strip() if w_type else ""
-            n_type_norm = n_type.lower().replace("_", " ").replace("-", " ").strip() if n_type else ""
-            if (w_type_norm and n_type_norm
-                    and w_type_norm != n_type_norm
-                    and w_type_norm not in n_type_norm
-                    and n_type_norm not in w_type_norm
-                    and _plan_value_is_asserted(w_type, PLAN_DEFAULT_TYPE_STRINGS)):
+            # Type check
+            if w_type and nat_type and not types_match(w_type, nat_type) and _plan_value_is_asserted(w_type, PLAN_DEFAULT_TYPE_STRINGS):
                 flags.append({
                     "flag_type": "opening_type_mismatch",
                     "item_ref": tag,
                     "category": _flag_category_label("opening_type_mismatch"),
                     "opening_id": tag,
-                    "description": f"Type mismatch for {tag} ({matched_location}): Plans '{w_type}' vs NatHERS '{n_type}'.",
+                    "description": f"Type mismatch for {tag} ({matched_location}): Plans '{w_type}' vs NatHERS '{nat_type}'.",
                     "severity": "Medium"
                 })
                 row_confidence -= 15.0
 
-            # FIX #7: Only flag glazing mismatch if plan value is a real assertion
+            # Glazing check (D6)
             n_glazing = nat_w.get("glazing")
-            if (glazing and n_glazing
-                    and glazing.lower() not in n_glazing.lower()
-                    and n_glazing.lower() not in glazing.lower()
-                    and _plan_value_is_asserted(glazing, PLAN_DEFAULT_GLAZING_STRINGS)):
-                flags.append({
-                    "flag_type": "glazing_mismatch",
-                    "item_ref": tag,
-                    "category": _flag_category_label("glazing_mismatch"),
-                    "opening_id": tag,
-                    "description": f"Glazing mismatch for {tag} ({matched_location}): Plans '{glazing}' vs NatHERS '{n_glazing}'.",
-                    "severity": "Medium"
-                })
-                row_confidence -= 10.0
+            if glazing and n_glazing and _plan_value_is_asserted(glazing, PLAN_DEFAULT_GLAZING_STRINGS):
+                if glazing_mismatch(glazing, n_glazing):
+                    flags.append({
+                        "flag_type": "glazing_mismatch",
+                        "item_ref": tag,
+                        "category": _flag_category_label("glazing_mismatch"),
+                        "opening_id": tag,
+                        "description": f"Glazing mismatch for {tag} ({matched_location}): Plans '{glazing}' vs NatHERS '{n_glazing}'.",
+                        "severity": "Medium"
+                    })
+                    row_confidence -= 10.0
 
             # Frame check
             n_frame = nat_w.get("frame_material") or nat_w.get("frame")
-            if (frame and n_frame 
-                    and frame.lower() not in n_frame.lower() 
-                    and n_frame.lower() not in frame.lower()
-                    and _plan_value_is_asserted(frame, PLAN_DEFAULT_FRAME_STRINGS)):
-                flags.append({
-                    "flag_type": "frame_mismatch",
-                    "item_ref": tag,
-                    "category": _flag_category_label("frame_mismatch"),
-                    "opening_id": tag,
-                    "description": f"Frame mismatch for {tag} ({matched_location}): Plans '{frame}' vs NatHERS '{n_frame}'.",
-                    "severity": "Medium"
-                })
-                row_confidence -= 10.0
+            if frame and n_frame and _plan_value_is_asserted(frame, PLAN_DEFAULT_FRAME_STRINGS):
+                if frame.lower().strip() != n_frame.lower().strip() and frame.lower() not in n_frame.lower() and n_frame.lower() not in frame.lower():
+                    flags.append({
+                        "flag_type": "frame_mismatch",
+                        "item_ref": tag,
+                        "category": _flag_category_label("frame_mismatch"),
+                        "opening_id": tag,
+                        "description": f"Frame mismatch for {tag} ({matched_location}): Plans '{frame}' vs NatHERS '{n_frame}'.",
+                        "severity": "Medium"
+                    })
+                    row_confidence -= 10.0
 
-            # FIX #2: Use NatHERS per-row glazing, U-value, SHGC (not plan defaults)
-            matched_glazing = nat_w.get("glazing", glazing)
+            # Use NatHERS specifications, fallback to plans
+            matched_glazing = n_glazing or glazing
             matched_frame   = n_frame or frame
             matched_u_value = nat_w.get("u_value", "")
             matched_shgc    = nat_w.get("shgc", "")
 
             src_ref = f"{src_ref} / {nat_w.get('src_ref', 'NatHERS')}"
         else:
-            # No NatHERS match found
+            # Plans only
             flags.append({
                 "flag_type": "missing_in_nathers",
                 "item_ref": tag,
@@ -329,15 +522,7 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             })
             row_confidence -= 30.0
 
-        # Standardize opening type label using matched authoritative type
-        opening_type = "Window"
-        type_lower = matched_type.lower() if matched_type else ""
-        if "door" in type_lower or "bifold" in type_lower or "stacker" in type_lower:
-            opening_type = "Door"
-            if "bifold" in type_lower or "stacker" in type_lower:
-                opening_type = "Bi-fold/Stacker Door"
-        elif "louvre" in type_lower:
-            opening_type = "Louvre"
+        opening_type = classify_opening_type(matched_type, matched_h, tag)
 
         row_confidence = max(0.0, row_confidence)
         if row_confidence < 70.0:
@@ -350,7 +535,6 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
                 "severity": "Low"
             })
 
-        # U/SHGC display
         u_shgc_display = ""
         if matched_u_value and matched_u_value != "N/A":
             u_shgc_display = f"U: {matched_u_value}"
@@ -360,10 +544,10 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             u_shgc_display = "N/A"
 
         takeoff_rows.append({
-            "location":     matched_location,   # FIX #1: NatHERS authoritative location
+            "location":     matched_location,
             "tag":          tag,
-            "height":       h,
-            "width":        w,
+            "height":       matched_h,
+            "width":        matched_w,
             "type":         matched_type,
             "opening_type": opening_type,
             "orientation":  orientation or "TBD",
@@ -377,7 +561,7 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             "src_ref":      src_ref
         })
 
-    # Add NatHERS-only items as takeoff rows (cert-verified, no plan cross-check)
+    # Add NatHERS-only items as takeoff rows
     for j, nat_w in enumerate(nathers_windows):
         if j not in matched_nathers_indices:
             nat_tag = nat_w.get("tag", "Unknown")
@@ -393,17 +577,7 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             nat_frame = nat_w.get("frame_material") or nat_w.get("frame") or "Aluminium"
             nat_src = nat_w.get("src_ref", "NatHERS")
 
-            # Determine opening type
-            opening_type = "Window"
-            type_lower = nat_type.lower() if nat_type else ""
-            if "door" in type_lower or "bifold" in type_lower or "stacker" in type_lower:
-                opening_type = "Door"
-                if "bifold" in type_lower or "stacker" in type_lower:
-                    opening_type = "Bi-fold/Stacker Door"
-            elif "louvre" in type_lower:
-                opening_type = "Louvre"
-
-            # NatHERS-only rows start at 70% (certificate-verified, but unconfirmed on plans)
+            opening_type = classify_opening_type(nat_type, nat_h, nat_tag)
             nat_confidence = 70.0
 
             u_shgc_display = ""
@@ -441,8 +615,7 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
                 "src_ref":      nat_src
             })
 
-    # FIX #6: BASIX aggregate cross-check — treat BASIX/NatHERS total as the anchor.
-    # The calculated plan area is the suspect when there is a mismatch, not the certificate.
+    # 4. BASIX aggregate cross-check
     try:
         total_plan_area = sum(
             calculate_window_area(r["height"], r["width"], r["quantity"])
@@ -453,11 +626,9 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         total_plan_area = 0.0
 
     basix_area = basix_data.get("total_glazing_area")
-
     if basix_area and total_plan_area > 0:
         discrepancy_pct = abs(total_plan_area - basix_area) / float(basix_area) * 100.0
         if discrepancy_pct > 10.0:
-            # FIX #6: Flag wording now correctly identifies the plan total as the suspect
             direction = "over-counting" if total_plan_area > basix_area else "under-counting"
             flags.append({
                 "flag_type": "basix_aggregate_mismatch",
@@ -474,18 +645,18 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
                 "severity": "High"
             })
 
-    # Overall confidence calculation with calibration penalty for missing/unmatched items
+    # 5. Calibrate overall confidence (D1)
     unmatched_count = len([f for f in flags if f["flag_type"] in ("missing_in_plans", "missing_in_nathers")])
     if takeoff_rows:
         base_confidence = sum(r["confidence"] for r in takeoff_rows) / len(takeoff_rows)
-        # Apply a penalty of 5.0% per unmatched/missing opening to calibrate to actual coverage
-        overall_confidence = max(0.0, base_confidence - (unmatched_count * 5.0))
+        # Apply a capped penalty of 2.0% per unmatched/missing opening (max penalty 20.0%)
+        unmatched_penalty = min(20.0, unmatched_count * 2.0)
+        overall_confidence = max(0.0, base_confidence - unmatched_penalty)
     else:
         overall_confidence = 0.0
 
-    # Pass/fail logic: only Reject if confidence is critically low
+    # 6. Pass/fail logic
     low_conf_rows = [r for r in takeoff_rows if r["confidence"] < 70.0]
-
     is_rejected = False
     rejection_reason = ""
 
@@ -497,7 +668,6 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         percent_low = (len(low_conf_rows) / len(takeoff_rows)) * 100.0
         rejection_reason = f"{percent_low:.1f}% of rows are below the 70% confidence limit (exceeds 25% tolerance)."
 
-    # Review Required: set to True if there are critical mismatches (High or Medium severity flags)
     critical_flags = [f for f in flags if f.get("severity") in ("High", "Medium")]
     if critical_flags:
         review_required = True
@@ -518,3 +688,4 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         "plan_glazing_area":  total_plan_area,
         "cert_glazing_area":  basix_area,
     }
+

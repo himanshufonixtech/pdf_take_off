@@ -292,7 +292,9 @@ def process_takeoff_background(job_id: str):
         job["progress"] = 75
         save_jobs_db()
         
-        recon_results = reconcile_takeoff(plans_windows, nathers_windows, basix_data)
+        has_plans_file = any(f.get("type") == "Plans" for f in job.get("files", []))
+        has_plans = has_plans_file and (len(plans_windows) > 0)
+        recon_results = reconcile_takeoff(plans_windows, nathers_windows, basix_data, has_plans=has_plans)
         
         job["takeoff_rows"]      = recon_results["rows"]
         job["flags"]             = recon_results["flags"]

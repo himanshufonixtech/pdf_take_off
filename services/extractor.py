@@ -100,9 +100,25 @@ def _is_opaque_door(tag: str, w_type: str, location: str) -> bool:
 
 def extract_nathers_data(file_path: str) -> list:
     """
-    Locates the window schedule pages in a NatHERS certificate
-    and extracts window/door list with per-row room labels and glazing products.
+    Locates the window and door schedule pages in a NatHERS certificate
+    and extracts window/door/external door list with per-row room labels and glazing products.
     """
+    def determine_frame_material(desc: str) -> str:
+        """Derives frame material from product description, defaulting to Aluminium."""
+        if not desc:
+            return "Aluminium"
+        desc_lower = desc.lower()
+        if any(k in desc_lower for k in ["timber", "wood", "cedar", "mdf"]):
+            return "Timber"
+        if any(k in desc_lower for k in ["upvc", "pvc", "vinyl"]):
+            return "uPVC"
+        return "Aluminium"
+
+    def get_valid_frame_material(f_val: str, glazing_desc: str) -> str:
+        if not f_val or str(f_val).lower().strip() in ["unknown", "n/a", "none"]:
+            return determine_frame_material(glazing_desc)
+        return f_val
+
     doc = fitz.open(file_path)
     page_numbers_set = set()
     schedule_text = ""
@@ -116,12 +132,12 @@ def extract_nathers_data(file_path: str) -> list:
             is_performance = False
             is_continuation = False
             
-            # 1. Match window schedule pages
-            if "window and glazed door schedule" in text_lower or "window schedule" in text_lower:
+            # 1. Match window schedule pages (D8: include external door schedule)
+            if "window and glazed door schedule" in text_lower or "window schedule" in text_lower or "external door schedule" in text_lower:
                 # Skip checklist pages or general explanatory/glossary pages
                 if "checklist" not in text_lower and "genuine certificate check" not in text_lower and "explanatory notes" not in text_lower:
                     # Skip pages that only have roof window schedule without main window schedule
-                    if not ("roof window schedule" in text_lower and "window and glazed door schedule" not in text_lower):
+                    if not ("roof window schedule" in text_lower and "window and glazed door schedule" not in text_lower and "external door schedule" not in text_lower):
                         is_schedule_start = True
                 
             # 2. Match window performance description pages (often split/overflowing onto preceding page)
@@ -131,7 +147,7 @@ def extract_nathers_data(file_path: str) -> list:
 
             # 3. Match continuation pages
             if not is_schedule_start and not is_performance and last_matched_is_schedule:
-                has_headers = any(kw in text_lower for kw in ["window no.", "height [mm]", "width [mm]", "opening %", "orientation", "window id"])
+                has_headers = any(kw in text_lower for kw in ["window no.", "height [mm]", "width [mm]", "opening %", "orientation", "window id", "door no."])
                 if has_headers and "checklist" not in text_lower and "genuine certificate check" not in text_lower and "explanatory notes" not in text_lower:
                     is_continuation = True
                     
@@ -158,10 +174,7 @@ def extract_nathers_data(file_path: str) -> list:
         if not schedule_text:
             return []
 
-        # FIX #1: Prompt now explicitly asks for room/location and separates catalog from instances
-        # FIX #2: Glazing lookup resolved in Python by extracting the specifications catalog and doing a dictionary join
-        # FIX #4: Include glazed doors (sliding, bifold, etc.) and exclude opaque doors
-        prompt = """You are an expert construction estimating AI. Extract both the window specification catalog and the window schedule from the NatHERS certificate text.
+        prompt = """You are an expert construction estimating AI. Extract both the window specification catalog and the window/door schedule from the NatHERS certificate text.
 
 Return a JSON object with exactly two keys: "glazing_types" and "windows". Return ONLY valid JSON.
 
@@ -169,18 +182,23 @@ Return a JSON object with exactly two keys: "glazing_types" and "windows". Retur
 Each object in the "glazing_types" list must have:
 - glazing_id: the window/glazing ID string (e.g. "SSW-025-305", "SSW-025-304", "A&L-012-306")
 - description: the full window description text (e.g. "150 Series Thermal Star Awning...")
+- frame_material: the frame material string (e.g. "Aluminium", "Timber", "uPVC"). Extract this from the Frame material column or description in the certificate.
 - u_value: the maximum U-value (float, e.g. 5.7)
 - shgc: the SHGC (float, e.g. 0.67)
 
-2. "windows": Extract all window and glazed door instances from the 'Window and glazed door schedule' table.
-Include BOTH windows and glazed doors (sliding doors, stacker doors, bifold doors, etc.).
-Do NOT include opaque/solid doors or garage doors.
+2. "windows": Extract all window, glazed door, and external door instances from the 'Window and glazed door schedule' table AND the 'External door schedule' table (if present).
+Include:
+- Windows and glazed doors (sliding doors, stacker doors, bifold doors, French doors, etc.).
+- External doors (e.g. entry doors, laundry external doors, solid/semi-glazed external doors).
+Exclude:
+- Garage doors, sectional doors, panel lift doors, roller doors (these are out of scope).
+- Internal passage doors (bedroom, bathroom, pantry, etc.).
 Each object in the "windows" list must have:
 - location: room/location name EXACTLY as in the schedule table (e.g. "BED 1", "LOUNGE", "STUDY")
-- tag: window number/code (e.g. "W1", "W2", "D1", "D2", "1806", "1118", "Opening 12"). This is the label uniquely identifying the opening instance (from the 'Window no.' or 'Window number' column). Do NOT set this to the glazing/product ID like 'ALM-001-01 A' or 'ALM-002-01 A'.
+- tag: window/door number/code (e.g. "W1", "W2", "D1", "D2", "1806", "1118", "Opening 12", "2136ALSD"). This is the label uniquely identifying the opening instance (from the 'Window no.' or 'Window number' column). It can be numeric, standard tags, or alphanumeric codes (like '2136ALSD'). Do NOT set this to the glazing/product ID like 'ALM-001-01 A' or 'ALM-002-01 A' unless that is the only identifier in the 'Window no.' column.
 - height: height in mm (integer)
 - width: width in mm (integer)
-- type: window type (e.g. "awning", "sliding", "sliding door")
+- type: opening/door/window type (e.g. "awning", "sliding", "sliding door", "hinged door", "stacker door")
 - orientation: compass orientation (e.g. "SSE", "NNW", "ENE")
 - glazing: the Window ID / Glazing code matching the glazing_id in the specification catalog (e.g. "ALM-001-01 A", "ALM-002-01 A", "SSW-025-304").
 - quantity: quantity (integer)
@@ -229,6 +247,7 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                             all_glazing[g_id.strip().upper()] = {
                                 "u_value": g.get("u_value"),
                                 "shgc": g.get("shgc"),
+                                "frame_material": g.get("frame_material"),
                                 "glazing": g.get("description", g_id)
                             }
                             
@@ -256,7 +275,7 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                     w["u_value"] = all_glazing[glazing_id]["u_value"]
                     w["shgc"] = all_glazing[glazing_id]["shgc"]
                     w["glazing"] = all_glazing[glazing_id]["glazing"]
-                    w["frame_material"] = "Aluminium" if "aluminium" in all_glazing[glazing_id]["glazing"].lower() else "Timber"
+                    w["frame_material"] = get_valid_frame_material(all_glazing[glazing_id].get("frame_material"), all_glazing[glazing_id]["glazing"])
                 else:
                     found = False
                     for key, spec in all_glazing.items():
@@ -264,14 +283,14 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                             w["u_value"] = spec["u_value"]
                             w["shgc"] = spec["shgc"]
                             w["glazing"] = spec["glazing"]
-                            w["frame_material"] = "Aluminium" if "aluminium" in spec["glazing"].lower() else "Timber"
+                            w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
                             found = True
                             break
                     if not found:
                         w["u_value"] = w.get("u_value", "N/A")
                         w["shgc"] = w.get("shgc", "N/A")
                         w["glazing"] = w.get("glazing", "Per NatHERS Schedule")
-                        w["frame_material"] = w.get("frame_material", "Aluminium")
+                        w["frame_material"] = get_valid_frame_material(w.get("frame_material"), w["glazing"])
                 
                 reconciled_windows.append(w)
             return reconciled_windows
@@ -293,6 +312,7 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                     all_glazing[g_id.strip().upper()] = {
                         "u_value": g.get("u_value"),
                         "shgc": g.get("shgc"),
+                        "frame_material": g.get("frame_material"),
                         "glazing": g.get("description", g_id)
                     }
                     
@@ -313,7 +333,7 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                     w["u_value"] = all_glazing[glazing_id]["u_value"]
                     w["shgc"] = all_glazing[glazing_id]["shgc"]
                     w["glazing"] = all_glazing[glazing_id]["glazing"]
-                    w["frame_material"] = "Aluminium" if "aluminium" in all_glazing[glazing_id]["glazing"].lower() else "Timber"
+                    w["frame_material"] = get_valid_frame_material(all_glazing[glazing_id].get("frame_material"), all_glazing[glazing_id]["glazing"])
                 else:
                     found = False
                     for key, spec in all_glazing.items():
@@ -321,14 +341,14 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                             w["u_value"] = spec["u_value"]
                             w["shgc"] = spec["shgc"]
                             w["glazing"] = spec["glazing"]
-                            w["frame_material"] = "Aluminium" if "aluminium" in spec["glazing"].lower() else "Timber"
+                            w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
                             found = True
                             break
                     if not found:
                         w["u_value"] = w.get("u_value", "N/A")
                         w["shgc"] = w.get("shgc", "N/A")
                         w["glazing"] = w.get("glazing", "Per NatHERS Schedule")
-                        w["frame_material"] = w.get("frame_material", "Aluminium")
+                        w["frame_material"] = get_valid_frame_material(w.get("frame_material"), w["glazing"])
                 result.append(w)
             return result
     finally:
@@ -622,7 +642,6 @@ def extract_plans_data(file_path: str, nathers_tags: set = None) -> list:
         doc.close()
         return []
 
-
     prompt = """Analyze the floor plan text from page {page_num} of the architectural plans.
 Identify ALL windows and GLAZED doors (e.g., sliding doors, bifold doors, stacker doors, French doors with glazing, etc.).
 
@@ -645,19 +664,19 @@ CRITICAL EXCLUSIONS:
 Extract every window and external glazed door label you see in the text. 
 Typically, each opening label consists of:
 1. A product or design code prefix (e.g., DS1827, DS1806, DSD2115, DAD2121, DA2112SP).
-2. The window/door tag itself (e.g., W1, W2, W3, ..., W11, D1, D2, AS0912, 1806, 18-09AAW).
+2. The window/door tag itself (e.g., W1, W2, W3, ..., W11, D1, D2, AS0912, 1806, 15-18AAW, 2136ALSD).
 3. The dimensions (e.g., 1800H x 2650W or 2057H x 1210W).
 
 Return a JSON object with a key "openings" containing a list. Return ONLY valid JSON.
 
 Fields per object:
-- tag: the exact window/door tag label or size/type code (e.g. "W1", "W2", "W10", "D1", "D2", "AS0912", "1806", "15-18AAW"). Make sure to use the tag or size code (like AS0912) and NOT the product code (like DS1827) if they are separate.
+- tag: the exact window/door tag label or size/type code (e.g. "W1", "W2", "W10", "D1", "D2", "AS0912", "1806", "15-18AAW", "2136ALSD"). Make sure to use the tag or size code (like AS0912) and NOT the product code (like DS1827) if they are separate.
 - height: height in mm as integer (e.g., 1800, 2057). If the tag or label contains the size code (e.g., "1806" or "DH1809" or "15-18"), extract the height from it (1800, 1800, 1500).
 - width: width in mm as integer (e.g., 2650, 1210). If the tag or label contains the size code (e.g., "1806" or "DH1809" or "15-18"), extract the width from it (600, 900, 1800).
 - type: opening type (e.g. "sliding", "awning", "fixed", "sliding door", "bifold", "stacker door", "louvre", "hinged door")
 - quantity: quantity (integer, default 1)
 - location: room name if you can guess it from proximity, otherwise make a best estimate or set to "TBD". Do NOT omit the opening if location is unclear.
-- frame: frame material if mentioned (e.g. "Aluminium", "Timber")
+- frame: frame material if mentioned for the window/door specifically (e.g. "Aluminium", "Timber"). CRITICAL: DO NOT extract the wall framing material (such as wall timber studs or "FRAME TYPE: Timber" from the construction notes) as the window frame material. If the window frame is not explicitly mentioned, return null.
 - glazing: glass type if mentioned
 - src_ref: "Plans p.{page_num}"
 
@@ -746,7 +765,7 @@ CRITICAL QUANTITY & DUPLICATE INSTANCE RULE: The page text often has multiple in
                 page_openings = data.get("openings", [])
                 
                 import re
-                size_code_pattern = re.compile(r'^(?:[a-zA-Z]{2,4})?\d{4}$|^\d{2}-\d{2}')
+                size_code_pattern = re.compile(r'^(?:[a-zA-Z]{2,4})?\d{4}(?:\s*[a-zA-Z]{1,4})?$|^\d{2}-\d{2}')
                 standard_tag_pattern = re.compile(r'^[wdWD]\d{1,2}$')
                 
                 size_code_count = 0
@@ -759,6 +778,24 @@ CRITICAL QUANTITY & DUPLICATE INSTANCE RULE: The page text often has multiple in
                 
                 for opening in page_openings:
                     tag = str(opening.get("tag", "")).strip()
+                    
+                    # Normalize window type based on standard Australian prefixes to prevent type mismatches (D6)
+                    tag_upper = tag.upper()
+                    if tag_upper.startswith("AS") or tag_upper.startswith("SL"):
+                        opening["type"] = "sliding"
+                    elif tag_upper.startswith("DH"):
+                        opening["type"] = "double hung"
+                    elif tag_upper.startswith("AW") or tag_upper.startswith("AAW"):
+                        opening["type"] = "awning"
+                    elif tag_upper.startswith("SD"):
+                        opening["type"] = "sliding door"
+                    elif tag_upper.startswith("BD"):
+                        opening["type"] = "bifold door"
+                    elif tag_upper.startswith("CS"):
+                        opening["type"] = "sliding door"
+                    elif tag_upper.startswith("FG") or tag_upper.startswith("FX") or tag_upper.startswith("FIX"):
+                        opening["type"] = "fixed"
+                        
                     w_type = str(opening.get("type", "")).lower()
                     location = str(opening.get("location", "")).lower()
                     

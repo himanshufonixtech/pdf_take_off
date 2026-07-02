@@ -15,11 +15,11 @@ def run_integration_tests():
     
     # Target files in docs/shred_pdf
     pdf_dir = r"d:\fonix\pdftakeoff\docs\shred_pdf"
-    plans_file = os.path.join(pdf_dir, "74 Grafton Street-251113a (1).pdf")
-    nathers_file = os.path.join(pdf_dir, "psetna4j3j (1).pdf")
+    plans_file = os.path.join(pdf_dir, "74graftson", "74 Grafton Street-251113a (1).pdf")
+    nathers_file = os.path.join(pdf_dir, "74graftson", "psetna4j3j (1).pdf")
     if not os.path.exists(nathers_file):
-        nathers_file = os.path.join(pdf_dir, "T001732 - NatHERS.pdf")
-    basix_file = os.path.join(pdf_dir, "T001732 - Basix.pdf")
+        nathers_file = os.path.join(pdf_dir, "T001732", "T001732 - NatHERS.pdf")
+    basix_file = os.path.join(pdf_dir, "T001732", "T001732 - Basix.pdf")
     
     # 1. Test Classification
     print("\n--- Testing Document Classification ---")
