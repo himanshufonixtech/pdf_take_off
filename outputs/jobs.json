@@ -3903,9 +3903,9 @@
         "job_id": "FNX-20260701-001",
         "project_name": "Lot 1808 Zillie Close",
         "project_type": "Single Dwelling",
-        "status": "Completed",
+        "status": "Review Required",
         "progress": 100,
-        "stage": "Completed",
+        "stage": "Review Required",
         "files": [
             {
                 "filename": "11439 (Lot 1808 Zillie Close Dubbo - NatHERS Cert) 20260113130631648.pdf",
@@ -4157,7 +4157,7 @@
                 "u_shgc": "N/A",
                 "frame": null,
                 "quantity": 1,
-                "confidence": 100.0,
+                "confidence": 80.0,
                 "src_ref": "Plans p.5"
             },
             {
@@ -4174,7 +4174,7 @@
                 "u_shgc": "N/A",
                 "frame": null,
                 "quantity": 1,
-                "confidence": 100.0,
+                "confidence": 80.0,
                 "src_ref": "Plans p.5"
             },
             {
@@ -4193,31 +4193,47 @@
                 "quantity": 1,
                 "confidence": 100.0,
                 "src_ref": "Plans p.5 / NatHERS p.5, p.6, p.7"
-            },
-            {
-                "location": "ENTRY / HALL",
-                "tag": "D1",
-                "height": 2040,
-                "width": 1200,
-                "type": "hinged door",
-                "opening_type": "Door",
-                "orientation": "E",
-                "glazing": null,
-                "u_value": "N/A",
-                "shgc": "N/A",
-                "u_shgc": "N/A",
-                "frame": null,
-                "quantity": 1,
-                "confidence": 70.0,
-                "src_ref": "NatHERS p.5, p.6, p.7"
             }
         ],
-        "flags": [],
-        "overall_confidence": 98.23529411764706,
+        "flags": [
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Orientation is TBD/Unknown for 820. Verify orientation manually.",
+                "severity": "Medium"
+            },
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Frame is TBD/Null for 820. Verify frame material manually.",
+                "severity": "Low"
+            },
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Orientation is TBD/Unknown for 820. Verify orientation manually.",
+                "severity": "Medium"
+            },
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Frame is TBD/Null for 820. Verify frame material manually.",
+                "severity": "Low"
+            }
+        ],
+        "overall_confidence": 97.5,
         "is_rejected": false,
         "rejection_reason": "",
-        "review_required": false,
-        "review_reason": "",
+        "review_required": true,
+        "review_reason": "Job has 2 critical consistency flags (High/Medium severity) requiring manual review.",
         "plan_glazing_area": 28.17,
         "cert_glazing_area": null,
         "excel_url": "/api/download/FNX-20260701-001_Lot_1808_Zillie_Close.xlsx",
@@ -4227,9 +4243,9 @@
         "job_id": "FNX-20260701-013",
         "project_name": "Takeoff Project 13",
         "project_type": "Single Dwelling",
-        "status": "Completed",
+        "status": "Review Required",
         "progress": 100,
-        "stage": "Completed",
+        "stage": "Review Required",
         "files": [
             {
                 "filename": "11439 (Lot 1808 Zillie Close Dubbo - NatHERS Cert) 20260113130631648.pdf",
@@ -4481,7 +4497,7 @@
                 "u_shgc": "N/A",
                 "frame": null,
                 "quantity": 1,
-                "confidence": 100.0,
+                "confidence": 80.0,
                 "src_ref": "Plans p.5"
             },
             {
@@ -4498,24 +4514,7 @@
                 "u_shgc": "N/A",
                 "frame": null,
                 "quantity": 1,
-                "confidence": 100.0,
-                "src_ref": "Plans p.5"
-            },
-            {
-                "location": "alfresco",
-                "tag": "820",
-                "height": 2040,
-                "width": 820,
-                "type": "hinged door",
-                "opening_type": "Door",
-                "orientation": "TBD",
-                "glazing": "Per NatHERS Schedule",
-                "u_value": "N/A",
-                "shgc": "N/A",
-                "u_shgc": "N/A",
-                "frame": null,
-                "quantity": 1,
-                "confidence": 100.0,
+                "confidence": 80.0,
                 "src_ref": "Plans p.5"
             },
             {
@@ -4534,33 +4533,49 @@
                 "quantity": 1,
                 "confidence": 100.0,
                 "src_ref": "Plans p.5 / NatHERS p.5, p.6, p.7"
-            },
-            {
-                "location": "ENTRY / HALL",
-                "tag": "D1",
-                "height": 2040,
-                "width": 1200,
-                "type": "hinged door",
-                "opening_type": "Door",
-                "orientation": "E",
-                "glazing": null,
-                "u_value": "N/A",
-                "shgc": "N/A",
-                "u_shgc": "N/A",
-                "frame": null,
-                "quantity": 1,
-                "confidence": 70.0,
-                "src_ref": "NatHERS p.5, p.6, p.7"
             }
         ],
-        "flags": [],
-        "overall_confidence": 98.33333333333333,
+        "flags": [
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Orientation is TBD/Unknown for 820. Verify orientation manually.",
+                "severity": "Medium"
+            },
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Frame is TBD/Null for 820. Verify frame material manually.",
+                "severity": "Low"
+            },
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Orientation is TBD/Unknown for 820. Verify orientation manually.",
+                "severity": "Medium"
+            },
+            {
+                "flag_type": "tbd_field",
+                "item_ref": "820",
+                "category": "TBD Field",
+                "opening_id": "820",
+                "description": "Frame is TBD/Null for 820. Verify frame material manually.",
+                "severity": "Low"
+            }
+        ],
+        "overall_confidence": 97.5,
         "is_rejected": false,
         "rejection_reason": "",
         "excel_url": "/api/download/FNX-20260701-013_Takeoff_Project_13.xlsx",
         "timestamp": "2026-07-01T17:17:34.120563Z",
-        "review_required": false,
-        "review_reason": "",
+        "review_required": true,
+        "review_reason": "Job has 2 critical consistency flags (High/Medium severity) requiring manual review.",
         "plan_glazing_area": 28.17,
         "cert_glazing_area": null
     }

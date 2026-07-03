@@ -107,8 +107,8 @@ def is_glazed_opening(r: dict) -> bool:
     t_str = str(r.get("type", "")).lower()
     g_str = str(r.get("glazing", "")).lower()
     
-    # Windows and Louvres are always glazed
-    if "window" in op_type or "louvre" in op_type:
+    # Windows, Louvres, and Skylights are always glazed
+    if "window" in op_type or "louvre" in op_type or "skylight" in op_type:
         return True
         
     # Opaque/solid doors are not glazed
@@ -170,6 +170,12 @@ def classify_opening_type(matched_type: str, height: int, tag: str) -> str:
     type_lower = matched_type.lower() if matched_type else ""
     tag_lower = str(tag).lower() if tag else ""
     
+    # 0. Check for skylight/roof window class
+    if any(k in type_lower for k in ["skylight", "roof window", "roof_window"]):
+        return "Skylight"
+    if any(k in tag_lower for k in ["rw", "sky"]):
+        return "Skylight"
+        
     # 1. First, check special louvre class
     if "louvre" in type_lower:
         return "Louvre"
@@ -622,35 +628,41 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
 
         opening_type = classify_opening_type(matched_type, matched_h, tag)
 
-        # Check for TBD location or orientation (Issue #8, #5: only for glazed openings)
-        is_glazed = is_glazed_opening({
-            "opening_type": opening_type,
-            "type": matched_type,
-            "glazing": matched_glazing,
-            "frame": matched_frame
-        })
-        if is_glazed:
-            if not matched_location or matched_location.upper() in ("TBD", "UNKNOWN"):
-                row_confidence -= 15.0
-                flags.append({
-                    "flag_type": "tbd_field",
-                    "item_ref": tag,
-                    "category": _flag_category_label("tbd_field"),
-                    "opening_id": tag,
-                    "description": f"Location is TBD/Unknown for {tag}. Verify room/location manually.",
-                    "severity": "Medium"
-                })
-                
-            if not orientation or orientation.upper() in ("TBD", "UNKNOWN"):
-                row_confidence -= 15.0
-                flags.append({
-                    "flag_type": "tbd_field",
-                    "item_ref": tag,
-                    "category": _flag_category_label("tbd_field"),
-                    "opening_id": tag,
-                    "description": f"Orientation is TBD/Unknown for {tag}. Verify orientation manually.",
-                    "severity": "Medium"
-                })
+        # Check for TBD location or orientation (Issue #8, #5)
+        if not matched_location or matched_location.upper() in ("TBD", "UNKNOWN"):
+            row_confidence -= 15.0
+            flags.append({
+                "flag_type": "tbd_field",
+                "item_ref": tag,
+                "category": _flag_category_label("tbd_field"),
+                "opening_id": tag,
+                "description": f"Location is TBD/Unknown for {tag}. Verify room/location manually.",
+                "severity": "Medium"
+            })
+            
+        if not orientation or orientation.upper() in ("TBD", "UNKNOWN"):
+            row_confidence -= 15.0
+            flags.append({
+                "flag_type": "tbd_field",
+                "item_ref": tag,
+                "category": _flag_category_label("tbd_field"),
+                "opening_id": tag,
+                "description": f"Orientation is TBD/Unknown for {tag}. Verify orientation manually.",
+                "severity": "Medium"
+            })
+
+        # Check for null/TBD frame (Issue #8)
+        frame_str = str(matched_frame).upper() if matched_frame else ""
+        if not matched_frame or frame_str in ("TBD", "UNKNOWN", "NONE", "NULL", ""):
+            row_confidence -= 5.0
+            flags.append({
+                "flag_type": "tbd_field",
+                "item_ref": tag,
+                "category": _flag_category_label("tbd_field"),
+                "opening_id": tag,
+                "description": f"Frame is TBD/Null for {tag}. Verify frame material manually.",
+                "severity": "Low"
+            })
 
         row_confidence = max(0.0, row_confidence)
         if row_confidence < 70.0:

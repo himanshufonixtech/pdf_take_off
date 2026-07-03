@@ -203,6 +203,7 @@ def generate_takeoff_excel(recon_results: dict, output_path: str, project_name: 
         fill_door = PatternFill(start_color="F2FDF8", end_color="F2FDF8", fill_type="solid") # soft pastel green
         fill_bifold = PatternFill(start_color="FDF7F2", end_color="FDF7F2", fill_type="solid") # soft pastel orange
         fill_louvre = PatternFill(start_color="FAF2FD", end_color="FAF2FD", fill_type="solid") # soft pastel purple
+        fill_skylight = PatternFill(start_color="FEFDE8", end_color="FEFDE8", fill_type="solid") # soft pastel yellow
         fill_low_conf = PatternFill(start_color="FDECEF", end_color="FDECEF", fill_type="solid") # soft warnings red/pink
         
         # Populate data rows
@@ -258,6 +259,8 @@ def generate_takeoff_excel(recon_results: dict, output_path: str, project_name: 
                 row_fill = fill_bifold
             elif opening_type == "Louvre":
                 row_fill = fill_louvre
+            elif opening_type == "Skylight":
+                row_fill = fill_skylight
                 
             for cell in [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12]:
                 cell.font = font_regular

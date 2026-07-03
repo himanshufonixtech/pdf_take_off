@@ -145,27 +145,54 @@ def _map_window_specifications(w: dict, all_glazing: dict, get_valid_frame_mater
         w["frame_material"] = None
         return w
         
+    import re
+    def _normalize_id(s: str) -> str:
+        return re.sub(r'[^A-Z0-9]', '', str(s).upper())
+        
     glazing_id = str(w.get("glazing", "")).strip().upper()
+    norm_glazing_id = _normalize_id(glazing_id)
+    
+    # 1. Direct match
     if glazing_id in all_glazing:
         w["u_value"] = all_glazing[glazing_id]["u_value"]
         w["shgc"] = all_glazing[glazing_id]["shgc"]
         w["glazing"] = all_glazing[glazing_id]["glazing"]
         w["frame_material"] = get_valid_frame_material(all_glazing[glazing_id].get("frame_material"), all_glazing[glazing_id]["glazing"])
-    else:
-        found = False
-        for key, spec in all_glazing.items():
-            if key in glazing_id or glazing_id in key:
-                w["u_value"] = spec["u_value"]
-                w["shgc"] = spec["shgc"]
-                w["glazing"] = spec["glazing"]
-                w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
-                found = True
-                break
-        if not found:
-            w["u_value"] = w.get("u_value", "N/A")
-            w["shgc"] = w.get("shgc", "N/A")
-            w["glazing"] = w.get("glazing", "Per NatHERS Schedule")
-            w["frame_material"] = get_valid_frame_material(w.get("frame_material"), w["glazing"])
+        return w
+        
+    # 2. Fuzzy match
+    found = False
+    for key, spec in all_glazing.items():
+        norm_key = _normalize_id(key)
+        # Check if one is substring of the other or if they are equal when normalized
+        if norm_key == norm_glazing_id or norm_key in norm_glazing_id or norm_glazing_id in norm_key:
+            w["u_value"] = spec["u_value"]
+            w["shgc"] = spec["shgc"]
+            w["glazing"] = spec["glazing"]
+            w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
+            found = True
+            break
+            
+    # 3. Last fallback (e.g. drop letter suffix like 'a' in GEN-04-003a to match GEN-04-003)
+    if not found and len(norm_glazing_id) > 1:
+        if norm_glazing_id[-1].isalpha():
+            short_norm = norm_glazing_id[:-1]
+            for key, spec in all_glazing.items():
+                norm_key = _normalize_id(key)
+                if norm_key == short_norm or norm_key in short_norm or short_norm in norm_key:
+                    w["u_value"] = spec["u_value"]
+                    w["shgc"] = spec["shgc"]
+                    w["glazing"] = spec["glazing"]
+                    w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
+                    found = True
+                    break
+
+    if not found:
+        w["u_value"] = w.get("u_value", "N/A")
+        w["shgc"] = w.get("shgc", "N/A")
+        w["glazing"] = w.get("glazing", "Per NatHERS Schedule")
+        w["frame_material"] = get_valid_frame_material(w.get("frame_material"), w["glazing"])
+        
     return w
 
 
