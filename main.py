@@ -18,12 +18,77 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 
+import hashlib
+import re
+import fitz
 import config
 from services.classifier import classify_pdf
 import concurrent.futures
 from services.extractor import extract_plans_data, extract_nathers_data, extract_basix_data
 from services.reconciler import reconcile_takeoff
 from services.excel_generator import generate_takeoff_excel
+
+def calculate_md5(file_path: str) -> str:
+    """Calculate the MD5 hash of a file."""
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+def extract_street_tokens(text: str) -> set:
+    """Extract unique street name tokens from the given text."""
+    if not text:
+        return set()
+    text_clean = text.lower().replace("\n", " ").replace(",", " ")
+    suffixes = r'\b(?:street|road|avenue|lane|drive|court|place|way|highway|parade|crescent|close|st|rd|ave|ln|dr|ct|pl)\b'
+    # Find words preceding these suffixes
+    matches = re.findall(r'(\b[a-z0-9\-]+)\s+' + suffixes, text_clean)
+    matches_two = re.findall(r'(\b[a-z0-9\-]+\s+[a-z0-9\-]+)\s+' + suffixes, text_clean)
+    
+    tokens = set()
+    for m in matches:
+        tokens.add(m)
+    for m in matches_two:
+        for word in m.split():
+            tokens.add(word)
+            
+    # Filter out common numbers, short tokens or generic words
+    ignored = {
+        "new", "the", "old", "east", "west", "north", "south", "main", "high", 
+        "long", "short", "lot", "dp", "ncc", "class", "storey", "single",
+        "double", "star", "assessor", "accreditation", "prop", "address",
+        "nathers", "basix", "client", "building", "project"
+    }
+    return {t for t in tokens if len(t) > 2 and t not in ignored}
+
+def tokens_match(tokens1: set, tokens2: set) -> bool:
+    """Check if any tokens fuzzy match each other."""
+    if not tokens1 or not tokens2:
+        return False
+    for t1 in tokens1:
+        for t2 in tokens2:
+            if t1 in t2 or t2 in t1:
+                return True
+            # Minor spelling difference check (e.g. hawk vs hawke)
+            if abs(len(t1) - len(t2)) <= 1:
+                if t1.startswith(t2[:4]) or t2.startswith(t1[:4]):
+                    return True
+    return False
+
+def extract_first_pages_text(file_path: str) -> str:
+    """Extract text from the first 2 pages of a PDF."""
+    try:
+        doc = fitz.open(file_path)
+        pages_to_read = min(2, len(doc))
+        text = ""
+        for i in range(pages_to_read):
+            text += doc[i].get_text() + "\n"
+        doc.close()
+        return text
+    except Exception as e:
+        print(f"Error reading first pages of {file_path}: {e}")
+        return ""
 
 app = FastAPI(title="FenX Window & Door Takeoff Prototype")
 
@@ -104,6 +169,35 @@ def process_takeoff_background(job_id: str):
         return
         
     try:
+        # MD5 de-duplication of uploaded files (Issue #3)
+        seen_hashes = {}
+        deduped_files = []
+        duplicate_notes = []
+        
+        for f in job.get("files", []):
+            fpath = f.get("path")
+            if not fpath or not os.path.exists(fpath):
+                deduped_files.append(f)
+                continue
+            try:
+                fhash = calculate_md5(fpath)
+                if fhash in seen_hashes:
+                    dup_name = f.get("filename")
+                    orig_name = seen_hashes[fhash]
+                    duplicate_notes.append(f"Duplicate file '{dup_name}' has the same content as '{orig_name}' and was skipped.")
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+                else:
+                    seen_hashes[fhash] = f.get("filename")
+                    deduped_files.append(f)
+            except Exception:
+                deduped_files.append(f)
+                
+        job["files"] = deduped_files
+        save_jobs_db()
+
         # Step 1: Classification
         job["status"] = "Processing"
         job["stage"] = "Classifying Documents"
@@ -123,7 +217,7 @@ def process_takeoff_background(job_id: str):
                     file_path = file_info["path"]
                     fut = ex.submit(classify_pdf, file_path)
                     futures[fut] = file_info
-
+ 
                 for fut in concurrent.futures.as_completed(futures):
                     try:
                         classification = fut.result()
@@ -132,7 +226,7 @@ def process_takeoff_background(job_id: str):
                     file_info = futures[fut]
                     file_info["type"] = classification.get("file_type", "Unknown")
                     file_info["pages"] = classification.get("pages", 0)
-
+ 
                     ftype = file_info["type"]
                     path = file_info["path"]
                     if ftype == "Plans":
@@ -151,7 +245,7 @@ def process_takeoff_background(job_id: str):
                 classification = classify_pdf(file_path)
                 file_info["type"] = classification["file_type"]
                 file_info["pages"] = classification["pages"]
-
+ 
                 if classification["file_type"] == "Plans":
                     plans_paths.append(file_path)
                 elif classification["file_type"] == "NatHERS":
@@ -162,6 +256,125 @@ def process_takeoff_background(job_id: str):
                     plans_paths.append(file_path)
                     nathers_paths.append(file_path)
                     basix_paths.append(file_path)
+
+        # Check types of files classified
+        classified_nathers = [f for f in job["files"] if f.get("type") in ("NatHERS", "Hybrid")]
+        classified_basix = [f for f in job["files"] if f.get("type") == "BASIX"]
+        classified_plans = [f for f in job["files"] if f.get("type") in ("Plans", "Hybrid")]
+
+        # Issue #4: Certificate-absent check
+        if not classified_nathers:
+            job["status"] = "Rejected"
+            job["stage"] = "Rejected"
+            job["progress"] = 100
+            job["is_rejected"] = True
+            job["rejection_reason"] = "No NatHERS certificate provided — cannot produce a schedule."
+            job["takeoff_rows"] = []
+            
+            dup_flags = []
+            for note in duplicate_notes:
+                dup_flags.append({
+                    "flag_type": "duplicate_file_skipped",
+                    "item_ref": "Upload Files",
+                    "category": "Duplicate File Note",
+                    "opening_id": "File Upload",
+                    "description": note,
+                    "severity": "Low"
+                })
+            job["flags"] = [{
+                "flag_type": "no_certificate",
+                "item_ref": "NatHERS Certificate",
+                "category": "Missing Certificate",
+                "opening_id": "NatHERS",
+                "description": "No NatHERS certificate provided — cannot produce a schedule.",
+                "severity": "High"
+            }] + dup_flags
+            job["overall_confidence"] = 0.0
+            save_jobs_db()
+            return
+
+        # Issue #1: Multi-certificate guard (multiple jobs)
+        if len(classified_nathers) > 1:
+            job["status"] = "Rejected"
+            job["stage"] = "Rejected"
+            job["progress"] = 100
+            job["is_rejected"] = True
+            job["rejection_reason"] = "Multiple jobs detected: Upload contains multiple NatHERS certificates. Please upload files for one project at a time."
+            job["takeoff_rows"] = []
+            
+            dup_flags = []
+            for note in duplicate_notes:
+                dup_flags.append({
+                    "flag_type": "duplicate_file_skipped",
+                    "item_ref": "Upload Files",
+                    "category": "Duplicate File Note",
+                    "opening_id": "File Upload",
+                    "description": note,
+                    "severity": "Low"
+                })
+            job["flags"] = [{
+                "flag_type": "multiple_certificates",
+                "item_ref": "NatHERS Certificates",
+                "category": "Multiple Jobs",
+                "opening_id": "NatHERS",
+                "description": "Multiple NatHERS certificates detected in upload.",
+                "severity": "High"
+            }] + dup_flags
+            job["overall_confidence"] = 0.0
+            save_jobs_db()
+            return
+
+        # Extract address tokens from NatHERS certificate
+        nathers_tokens = set()
+        for f in classified_nathers:
+            text = extract_first_pages_text(f["path"])
+            nathers_tokens.update(extract_street_tokens(text))
+
+        # Check BASIX address match
+        for f in classified_basix:
+            text = extract_first_pages_text(f["path"])
+            basix_tokens = extract_street_tokens(text)
+            if basix_tokens and not tokens_match(nathers_tokens, basix_tokens):
+                job["status"] = "Rejected"
+                job["stage"] = "Rejected"
+                job["progress"] = 100
+                job["is_rejected"] = True
+                job["rejection_reason"] = f"Document Mismatch: BASIX certificate and NatHERS certificate belong to different project addresses (Tokens: {list(basix_tokens)} vs {list(nathers_tokens)})."
+                job["takeoff_rows"] = []
+                job["flags"] = [{
+                    "flag_type": "document_mismatch",
+                    "item_ref": "BASIX Certificate",
+                    "category": "Document Mismatch",
+                    "opening_id": "BASIX",
+                    "description": "BASIX certificate and NatHERS certificate belong to different project addresses.",
+                    "severity": "High"
+                }]
+                job["overall_confidence"] = 0.0
+                save_jobs_db()
+                return
+
+        # Check Plans address match (Issue #11)
+        for f in classified_plans:
+            text = extract_first_pages_text(f["path"])
+            plans_tokens = extract_street_tokens(text)
+            if plans_tokens and not tokens_match(nathers_tokens, plans_tokens):
+                job["status"] = "Rejected"
+                job["stage"] = "Rejected"
+                job["progress"] = 100
+                job["is_rejected"] = True
+                job["rejection_reason"] = f"Document Mismatch: The plans file '{f['filename']}' does not match the project address of the NatHERS certificate (Tokens: {list(plans_tokens)} vs {list(nathers_tokens)})."
+                job["takeoff_rows"] = []
+                job["flags"] = [{
+                    "flag_type": "document_mismatch",
+                    "item_ref": f["filename"],
+                    "category": "Document Mismatch",
+                    "opening_id": "Plans",
+                    "description": f"Plans file '{f['filename']}' does not match the NatHERS certificate address.",
+                    "severity": "High"
+                }]
+                job["overall_confidence"] = 0.0
+                save_jobs_db()
+                return
                 
         # Step 2: Extraction (parallel, bounded)
         job["stage"] = "Extracting Data (Plans & Certificates)"
@@ -305,6 +518,18 @@ def process_takeoff_background(job_id: str):
             has_plans=has_plans, has_plans_file=has_plans_file
         )
         
+        # Add duplicate file notes if any to flags (Issue #3)
+        if duplicate_notes:
+            for note in duplicate_notes:
+                recon_results["flags"].append({
+                    "flag_type": "duplicate_file_skipped",
+                    "item_ref": "Upload Files",
+                    "category": "Duplicate File Note",
+                    "opening_id": "File Upload",
+                    "description": note,
+                    "severity": "Low"
+                })
+                
         job["takeoff_rows"]      = recon_results["rows"]
         job["flags"]             = recon_results["flags"]
         job["overall_confidence"]= recon_results["overall_confidence"]

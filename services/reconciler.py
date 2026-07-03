@@ -56,6 +56,8 @@ def _flag_category_label(flag_type: str) -> str:
         "missing_in_plans":      "Missing in Plans",
         "basix_aggregate_mismatch": "BASIX Area Mismatch",
         "low_confidence":        "Low Confidence",
+        "tbd_field":             "TBD Field",
+        "obscure_glazing_note":  "Obscure Glazing Note",
     }
     return labels.get(flag_type, flag_type.replace("_", " ").title())
 
@@ -157,8 +159,6 @@ def glazing_mismatch(p_glazing: str, n_glazing: str) -> bool:
         if p_cat["type"] != n_cat["type"]:
             return True
     if p_cat["low_e"] and not n_cat["low_e"]:
-        return True
-    if p_cat["obscure"] and not n_cat["obscure"]:
         return True
     if p_cat["laminated"] and not n_cat["laminated"]:
         return True
@@ -499,18 +499,31 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             if nw:
                 matched_w = nw
 
-            # Dimension check
+            # Dimension check (Issue #14: Scale severity and penalty by magnitude)
             if h and w and nh and nw:
-                if abs(h - nh) > 5 or abs(w - nw) > 5:
+                diff_h = abs(h - nh)
+                diff_w = abs(w - nw)
+                max_diff = max(diff_h, diff_w)
+                if max_diff > 5:
+                    if max_diff <= 50:
+                        severity = "Low"
+                        penalty = 5.0
+                    elif max_diff <= 150:
+                        severity = "Medium"
+                        penalty = 12.0
+                    else:
+                        severity = "High"
+                        penalty = 20.0
+                        
                     flags.append({
                         "flag_type": "dimension_mismatch",
                         "item_ref": tag,
                         "category": _flag_category_label("dimension_mismatch"),
                         "opening_id": tag,
-                        "description": f"Dimension mismatch for {tag} ({matched_location}): Plans {h}H×{w}W vs NatHERS {nh}H×{nw}W.",
-                        "severity": "High"
+                        "description": f"Dimension mismatch for {tag} ({matched_location}): Plans {h}H×{w}W vs NatHERS {nh}H×{nw}W (Difference: {max_diff}mm).",
+                        "severity": severity
                     })
-                    row_confidence -= 20.0
+                    row_confidence -= penalty
 
             # Orientation check
             n_orient = nat_w.get("orientation")
@@ -542,6 +555,20 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             # Glazing check (D6)
             n_glazing = nat_w.get("glazing")
             if glazing and n_glazing and _plan_value_is_asserted(glazing, PLAN_DEFAULT_GLAZING_STRINGS):
+                p_cat = normalize_glazing_category(glazing)
+                n_cat = normalize_glazing_category(n_glazing)
+                
+                # Check for obscure glazing mismatch and raise Low severity note (Issue #13)
+                if p_cat["obscure"] and not n_cat["obscure"]:
+                    flags.append({
+                        "flag_type": "obscure_glazing_note",
+                        "item_ref": tag,
+                        "category": _flag_category_label("obscure_glazing_note"),
+                        "opening_id": tag,
+                        "description": f"Obscure glazing noted on plans for {tag} ({matched_location}) — clear/obscure share U-value/SHGC; plan adds detail.",
+                        "severity": "Low"
+                    })
+                    
                 if glazing_mismatch(glazing, n_glazing):
                     flags.append({
                         "flag_type": "glazing_mismatch",
@@ -594,6 +621,36 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
                 row_confidence -= 30.0
 
         opening_type = classify_opening_type(matched_type, matched_h, tag)
+
+        # Check for TBD location or orientation (Issue #8, #5: only for glazed openings)
+        is_glazed = is_glazed_opening({
+            "opening_type": opening_type,
+            "type": matched_type,
+            "glazing": matched_glazing,
+            "frame": matched_frame
+        })
+        if is_glazed:
+            if not matched_location or matched_location.upper() in ("TBD", "UNKNOWN"):
+                row_confidence -= 15.0
+                flags.append({
+                    "flag_type": "tbd_field",
+                    "item_ref": tag,
+                    "category": _flag_category_label("tbd_field"),
+                    "opening_id": tag,
+                    "description": f"Location is TBD/Unknown for {tag}. Verify room/location manually.",
+                    "severity": "Medium"
+                })
+                
+            if not orientation or orientation.upper() in ("TBD", "UNKNOWN"):
+                row_confidence -= 15.0
+                flags.append({
+                    "flag_type": "tbd_field",
+                    "item_ref": tag,
+                    "category": _flag_category_label("tbd_field"),
+                    "opening_id": tag,
+                    "description": f"Orientation is TBD/Unknown for {tag}. Verify orientation manually.",
+                    "severity": "Medium"
+                })
 
         row_confidence = max(0.0, row_confidence)
         if row_confidence < 70.0:
@@ -731,6 +788,13 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         # Apply a capped penalty of 2.0% per unmatched/missing opening (max penalty 20.0%)
         unmatched_penalty = min(20.0, unmatched_count * 2.0)
         overall_confidence = max(0.0, base_confidence - unmatched_penalty)
+        
+        # Issue #2: Penalize simultaneous both-directions missing patterns
+        num_missing_in_plans = len([f for f in flags if f["flag_type"] == "missing_in_plans"])
+        num_missing_in_nathers = len([f for f in flags if f["flag_type"] == "missing_in_nathers"])
+        if num_missing_in_plans > 0 and num_missing_in_nathers > 0:
+            both_directions_penalty = min(30.0, (num_missing_in_plans + num_missing_in_nathers) * 3.0)
+            overall_confidence = max(0.0, overall_confidence - both_directions_penalty)
     else:
         overall_confidence = 0.0
 
