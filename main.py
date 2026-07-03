@@ -40,7 +40,7 @@ def extract_street_tokens(text: str) -> set:
     """Extract unique street name tokens from the given text."""
     if not text:
         return set()
-    text_clean = text.lower().replace("\n", " ").replace(",", " ")
+    text_clean = text.lower().replace("\n", " ").replace(",", " ").replace("_", " ").replace("-", " ")
     suffixes = r'\b(?:street|road|avenue|lane|drive|court|place|way|highway|parade|crescent|close|st|rd|ave|ln|dr|ct|pl)\b'
     # Find words preceding these suffixes
     matches = re.findall(r'(\b[a-z0-9\-]+)\s+' + suffixes, text_clean)
@@ -74,6 +74,23 @@ def tokens_match(tokens1: set, tokens2: set) -> bool:
             if abs(len(t1) - len(t2)) <= 1:
                 if t1.startswith(t2[:4]) or t2.startswith(t1[:4]):
                     return True
+    return False
+
+def address_matches_project(doc_text: str, nathers_tokens: set) -> bool:
+    """
+    Returns True if the document text or filename contains any of the NatHERS project address street tokens,
+    or if NatHERS has no address tokens (fallback).
+    """
+    if not nathers_tokens:
+        return True
+    doc_lower = doc_text.lower()
+    for token in nathers_tokens:
+        if token in doc_lower:
+            return True
+        if len(token) >= 4:
+            prefix = token[:4]
+            if prefix in doc_lower:
+                return True
     return False
 
 def extract_first_pages_text(file_path: str) -> str:
@@ -327,14 +344,21 @@ def process_takeoff_background(job_id: str):
         # Extract address tokens from NatHERS certificate
         nathers_tokens = set()
         for f in classified_nathers:
-            text = extract_first_pages_text(f["path"])
+            text = extract_first_pages_text(f["path"]) + " " + f.get("filename", "")
             nathers_tokens.update(extract_street_tokens(text))
 
         # Check BASIX address match
         for f in classified_basix:
-            text = extract_first_pages_text(f["path"])
+            text = extract_first_pages_text(f["path"]) + " " + f.get("filename", "")
             basix_tokens = extract_street_tokens(text)
-            if basix_tokens and not tokens_match(nathers_tokens, basix_tokens):
+            
+            matched = False
+            if basix_tokens and tokens_match(nathers_tokens, basix_tokens):
+                matched = True
+            elif address_matches_project(text, nathers_tokens):
+                matched = True
+                
+            if not matched:
                 job["status"] = "Rejected"
                 job["stage"] = "Rejected"
                 job["progress"] = 100
@@ -355,9 +379,16 @@ def process_takeoff_background(job_id: str):
 
         # Check Plans address match (Issue #11)
         for f in classified_plans:
-            text = extract_first_pages_text(f["path"])
+            text = extract_first_pages_text(f["path"]) + " " + f.get("filename", "")
             plans_tokens = extract_street_tokens(text)
-            if plans_tokens and not tokens_match(nathers_tokens, plans_tokens):
+            
+            matched = False
+            if plans_tokens and tokens_match(nathers_tokens, plans_tokens):
+                matched = True
+            elif address_matches_project(text, nathers_tokens):
+                matched = True
+                
+            if not matched:
                 job["status"] = "Rejected"
                 job["stage"] = "Rejected"
                 job["progress"] = 100

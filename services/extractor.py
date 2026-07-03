@@ -655,7 +655,7 @@ def extract_plans_data(file_path: str, nathers_tags: set = None) -> list:
             "electrical plan", "electrical layout", "slab layout", "slab plan", "slab setout",
             "bracing plan", "joist layout", "floor framing", "roof framing", "drainage plan",
             "drainage layout", "services plan", "concept plan", "joist plan", "site plan",
-            "location plan", "demolition plan", "section plan", "elevations"
+            "location plan", "demolition plan", "section plan"
         ]
         is_trade_sheet = False
         for phrase in UNCONDITIONAL_EXCLUSION_PHRASES:

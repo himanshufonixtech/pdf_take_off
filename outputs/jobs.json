@@ -2968,7 +2968,7 @@
                 "u_shgc": "U: 5.4 / SHGC: 0.58",
                 "frame": "Aluminium",
                 "quantity": 1,
-                "confidence": 95.0,
+                "confidence": 100.0,
                 "src_ref": "Plans p.4 / NatHERS p.6, p.7"
             },
             {
@@ -3213,14 +3213,6 @@
         "flags": [
             {
                 "flag_type": "dimension_mismatch",
-                "item_ref": "2136ALSD",
-                "category": "Dimension Mismatch",
-                "opening_id": "2136ALSD",
-                "description": "Dimension mismatch for 2136ALSD (Kitchen/Living): Plans 2130H×3600W vs NatHERS 2100H×3600W (Difference: 30mm).",
-                "severity": "Low"
-            },
-            {
-                "flag_type": "dimension_mismatch",
                 "item_ref": "1118",
                 "category": "Dimension Mismatch",
                 "opening_id": "1118",
@@ -3276,7 +3268,7 @@
                 "severity": "Medium"
             }
         ],
-        "overall_confidence": 74.0,
+        "overall_confidence": 74.33333333333333,
         "is_rejected": false,
         "rejection_reason": "",
         "review_required": true,
@@ -4193,6 +4185,23 @@
                 "quantity": 1,
                 "confidence": 100.0,
                 "src_ref": "Plans p.5 / NatHERS p.5, p.6, p.7"
+            },
+            {
+                "location": "ENTRY / HALL",
+                "tag": "D1",
+                "height": 2040,
+                "width": 1200,
+                "type": "hinged door",
+                "opening_type": "Door",
+                "orientation": "E",
+                "glazing": null,
+                "u_value": "N/A",
+                "shgc": "N/A",
+                "u_shgc": "N/A",
+                "frame": null,
+                "quantity": 1,
+                "confidence": 70.0,
+                "src_ref": "NatHERS p.5, p.6, p.7"
             }
         ],
         "flags": [
@@ -4229,7 +4238,7 @@
                 "severity": "Low"
             }
         ],
-        "overall_confidence": 97.5,
+        "overall_confidence": 95.88235294117646,
         "is_rejected": false,
         "rejection_reason": "",
         "review_required": true,
@@ -4578,5 +4587,40 @@
         "review_reason": "Job has 2 critical consistency flags (High/Medium severity) requiring manual review.",
         "plan_glazing_area": 28.17,
         "cert_glazing_area": null
+    },
+    "MOCK-TEST-MULTIPROJECT": {
+        "job_id": "MOCK-TEST-MULTIPROJECT",
+        "project_name": "Mock Multi Project",
+        "status": "Rejected",
+        "files": [
+            {
+                "filename": "FNX-20260701-002_74 Grafton Street-251113a 1.pdf",
+                "path": "d:\\fonix\\pdftakeoff\\uploads\\FNX-20260701-002_74 Grafton Street-251113a 1.pdf",
+                "type": "Plans",
+                "pages": 15
+            },
+            {
+                "filename": "FNX-20260701-001_11439 Lot 1808 Zillie Close Dubbo - NatHERS Cert 20260113130631648.pdf",
+                "path": "d:\\fonix\\pdftakeoff\\uploads\\FNX-20260701-001_11439 Lot 1808 Zillie Close Dubbo - NatHERS Cert 20260113130631648.pdf",
+                "type": "NatHERS",
+                "pages": 14
+            }
+        ],
+        "stage": "Rejected",
+        "progress": 100,
+        "is_rejected": true,
+        "rejection_reason": "Document Mismatch: The plans file 'FNX-20260701-002_74 Grafton Street-251113a 1.pdf' does not match the project address of the NatHERS certificate (Tokens: ['grafton'] vs ['1808', 'zillie']).",
+        "takeoff_rows": [],
+        "flags": [
+            {
+                "flag_type": "document_mismatch",
+                "item_ref": "FNX-20260701-002_74 Grafton Street-251113a 1.pdf",
+                "category": "Document Mismatch",
+                "opening_id": "Plans",
+                "description": "Plans file 'FNX-20260701-002_74 Grafton Street-251113a 1.pdf' does not match the NatHERS certificate address.",
+                "severity": "High"
+            }
+        ],
+        "overall_confidence": 0.0
     }
 }
