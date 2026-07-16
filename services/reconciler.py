@@ -18,22 +18,25 @@ def normalize_location(loc: str) -> str:
         return ""
     loc = loc.lower().strip()
     replacements = {
-        "bed 1": "bed1", "bedroom 1": "bed1", "bed1": "bed1", "br1": "bed1",
+        "bed 1": "bed1", "bedroom 1": "bed1", "bed1": "bed1", "br1": "bed1", "mbd": "bed1", "mbr": "bed1", "master bed": "bed1", "master bedroom": "bed1",
         "bed 2": "bed2", "bedroom 2": "bed2", "bed2": "bed2", "br2": "bed2",
         "bed 3": "bed3", "bedroom 3": "bed3", "bed3": "bed3", "br3": "bed3",
         "bed 4": "bed4", "bedroom 4": "bed4", "bed4": "bed4", "br4": "bed4",
         "bath": "bath", "bathroom": "bath", "ensuite": "bath", "ens": "bath", "en suite": "bath",
-        "fam": "living", "family": "living", "living": "living", "lounge": "living",
-        "din": "dining", "dining": "dining",
-        "kit": "kitchen", "kitchen": "kitchen",
-        "ver": "verandah", "verandah": "verandah", "veranda": "verandah", "porch": "verandah",
-        "wir": "closet", "walk in robe": "closet", "wardrobe": "closet", "closet": "closet",
-        "laundry": "laundry", "utility": "laundry",
+        "family room": "living", "family": "living", "living room": "living", "living": "living", "lounge": "living", "fam": "living",
+        "dining room": "dining", "dining": "dining", "din": "dining",
+        "kitchen": "kitchen", "kit": "kitchen",
+        "verandah": "verandah", "veranda": "verandah", "porch": "verandah", "alfresco": "verandah", "alf": "verandah", "ver": "verandah",
+        "walk in robe": "closet", "walk-in robe": "closet", "wardrobe": "closet", "wir": "closet", "closet": "closet",
+        "laundry": "laundry", "utility": "laundry", "ldy": "laundry",
         "garage": "garage", "entry": "entry", "patio": "patio", "study": "study",
     }
-    for key, val in replacements.items():
-        if key in loc:
-            loc = loc.replace(key, val)
+    # Use exact match first, then prefix match — avoid substring corruption
+    if loc in replacements:
+        return replacements[loc]
+    for key in sorted(replacements, key=len, reverse=True):
+        if loc.startswith(key):
+            return replacements[key]
     return loc
 
 
@@ -232,11 +235,25 @@ def types_match(t1: str, t2: str) -> bool:
     return t1_norm == t2_norm or t1_norm in t2_norm or t2_norm in t1_norm
 
 
+def is_standard_tag(tag: str) -> bool:
+    """Returns True if the tag matches a standard Australian opening label convention (e.g. W1, W02, D3, etc.)"""
+    if not tag:
+        return False
+    t = str(tag).strip().upper()
+    import re
+    # Matches tags like W1, W02, D3, D12, W1A, D3B, or standard sizes like 1809, 1518, DH1809
+    if re.match(r'^[WDwd]\d{1,2}[A-Z]?$', t):
+        return True
+    if re.match(r'^(?:[A-Z]{1,4})?\d{4}(?:\s*[A-Z]{1,4})?$', t):
+        return True
+    return False
+
+
 def calculate_match_score(plan_w: dict, nat_w: dict) -> float:
     """Calculate the match score between a plan window and a NatHERS window."""
     p_tag = str(plan_w.get("tag", "")).strip().upper()
     n_tag = str(nat_w.get("tag", "")).strip().upper()
-    tags_match = (p_tag == n_tag) and p_tag != ""
+    tags_match = (p_tag == n_tag) and p_tag != "" and p_tag not in ("N/A", "UNKNOWN", "NONE", "")
 
     ph = plan_w.get("height")
     pw = plan_w.get("width")
@@ -255,10 +272,31 @@ def calculate_match_score(plan_w: dict, nat_w: dict) -> float:
 
     # Relax height tolerance for doors (standard door height varies: 2040mm vs 2100mm)
     height_tolerance = 100 if is_door_pair else 50
+    width_tolerance = 50
+
+    # Determine if standard tags are present
+    p_tag_standard = is_standard_tag(p_tag)
+    n_tag_standard = is_standard_tag(n_tag)
+    
+    # If standard tags are NOT present in at least one document (e.g. BERS Pro tag-less, or FirstRate5 "Opening 17"),
+    # we relax the dimension matching tolerance if location and orientation are strong indicators.
+    relaxed_tolerance = False
+    if not p_tag_standard or not n_tag_standard:
+        p_loc = plan_w.get("location", "")
+        n_loc = nat_w.get("location", "")
+        p_orient = plan_w.get("orientation", "")
+        n_orient = nat_w.get("orientation", "")
+        if p_loc and n_loc and locations_match(p_loc, n_loc):
+            # Same room location! Relax tolerance significantly (up to 300mm width, 300mm height)
+            height_tolerance = 300
+            width_tolerance = 300
+            relaxed_tolerance = True
+        else:
+            width_tolerance = 100
 
     dims_within_tolerance = False
     if dim_diff_h is not None and dim_diff_w is not None:
-        if dim_diff_h <= height_tolerance and dim_diff_w <= 50:
+        if dim_diff_h <= height_tolerance and dim_diff_w <= width_tolerance:
             dims_within_tolerance = True
 
     # If tags don't match, they must have dimensions within tolerance to be paired
@@ -272,7 +310,7 @@ def calculate_match_score(plan_w: dict, nat_w: dict) -> float:
     if dim_diff_h is not None and dim_diff_w is not None:
         if dim_diff_h <= 5 and dim_diff_w <= 5:
             score += 60.0
-        elif dim_diff_h <= height_tolerance and dim_diff_w <= 50:
+        elif dim_diff_h <= height_tolerance and dim_diff_w <= width_tolerance:
             score += 45.0
 
     p_loc = plan_w.get("location", "")
@@ -293,14 +331,128 @@ def calculate_match_score(plan_w: dict, nat_w: dict) -> float:
     return score
 
 
-def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: dict, has_plans: bool = True, has_plans_file: bool = False) -> dict:
+def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: dict, has_plans: bool = True, has_plans_file: bool = False, has_nathers: bool = True) -> dict:
     """
     Reconciles window schedules from Plans and NatHERS,
     cross-checks against BASIX, calculates confidence,
     and returns takeoff rows and consistency flags.
+
+    Args:
+        has_nathers: If False, run in plans-only mode (no NatHERS cross-check available).
     """
     takeoff_rows = []
     flags = []
+
+    # 0. Plans-only fallback path (no NatHERS certificate provided, but plans+BASIX present)
+    if not has_nathers:
+        for plan_w in (plans_windows or []):
+            tag = plan_w.get("tag", "Unknown")
+            loc = plan_w.get("location", "")
+            h = plan_w.get("height")
+            w = plan_w.get("width")
+            w_type = plan_w.get("type", "window")
+            qty = plan_w.get("quantity", 1)
+            orientation = plan_w.get("orientation") or "TBD"
+            frame = plan_w.get("frame")
+            glazing = plan_w.get("glazing")
+            src_ref = plan_w.get("src_ref", "Plans")
+
+            opening_type = classify_opening_type(w_type, h, tag)
+
+            # Clamp confidence due to no NatHERS verification
+            row_confidence = 75.0
+
+            if not loc or loc.upper() in ("TBD", "UNKNOWN"):
+                row_confidence -= 10.0
+                flags.append({
+                    "flag_type": "tbd_field",
+                    "item_ref": tag,
+                    "category": _flag_category_label("tbd_field"),
+                    "opening_id": tag,
+                    "description": f"Location is TBD/Unknown for {tag}. Verify room/location manually.",
+                    "severity": "Medium"
+                })
+
+            if not orientation or orientation.upper() in ("TBD", "UNKNOWN"):
+                row_confidence -= 10.0
+                flags.append({
+                    "flag_type": "tbd_field",
+                    "item_ref": tag,
+                    "category": _flag_category_label("tbd_field"),
+                    "opening_id": tag,
+                    "description": f"Orientation is TBD/Unknown for {tag}. Verify orientation manually.",
+                    "severity": "Medium"
+                })
+
+            row_confidence = max(0.0, row_confidence)
+
+            takeoff_rows.append({
+                "location":     loc,
+                "tag":          tag,
+                "height":       h,
+                "width":        w,
+                "type":         w_type,
+                "opening_type": opening_type,
+                "orientation":  orientation,
+                "glazing":      glazing or "Not specified — no NatHERS schedule",
+                "u_value":      "N/A",
+                "shgc":         "N/A",
+                "u_shgc":       "N/A",
+                "frame":        frame or ("Aluminium" if opening_type != "Door" else None),
+                "quantity":     qty,
+                "confidence":   row_confidence,
+                "src_ref":      src_ref
+            })
+
+        flags.insert(0, {
+            "flag_type": "no_nathers_fallback",
+            "item_ref": "NatHERS Certificate",
+            "category": "Info",
+            "opening_id": "NatHERS",
+            "description": (
+                "No NatHERS certificate was provided. Takeoff is based on floor plans only (BRD M3.1.007). "
+                "Glazing performance values (U-value, SHGC, glazing product) are not available and are set to N/A. "
+                "Manual review is required before submission."
+            ),
+            "severity": "Medium"
+        })
+
+        # Compute glazed area and check against BASIX if available
+        try:
+            total_plan_area = sum(
+                calculate_window_area(r["height"], r["width"], r["quantity"])
+                for r in takeoff_rows
+                if r.get("height") and r.get("width") and is_glazed_opening(r)
+            )
+        except Exception:
+            total_plan_area = 0.0
+
+        basix_area = basix_data.get("total_glazing_area")
+
+        overall_confidence = (
+            sum(r["confidence"] for r in takeoff_rows) / len(takeoff_rows)
+            if takeoff_rows else 0.0
+        )
+        # Reduce overall confidence further due to missing NatHERS
+        overall_confidence = max(0.0, overall_confidence - 20.0)
+
+        review_required = True
+        review_reason = "No NatHERS certificate was supplied. Manual review of glazing performance values is required."
+
+        return {
+            "rows":               takeoff_rows,
+            "flags":              flags,
+            "overall_confidence": overall_confidence,
+            "is_rejected":        False,
+            "rejection_reason":   "",
+            "review_required":    review_required,
+            "review_reason":      review_reason,
+            "basix_details":      basix_data,
+            "plan_glazing_area":  total_plan_area,
+            "cert_glazing_area":  basix_area,
+        }
+
+
 
     # 1. Handle No Plans case (D2)
     if not has_plans:
@@ -487,9 +639,12 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         if match_idx != -1:
             nat_w = nathers_windows[match_idx]
 
-            # Use NatHERS room label as authoritative location
+            # Prefer plan room name (real rooms) over NatHERS thermal zones
             nat_location = nat_w.get("location", "")
-            if nat_location:
+            is_nathers_thermal_zone = any(z in nat_location.lower() for z in ["night time", "day time", "unconditioned", "zone", "conditioned"])
+            if loc and (loc.lower().strip() not in ["tbd", "unknown", ""] or is_nathers_thermal_zone):
+                matched_location = loc
+            elif nat_location:
                 matched_location = nat_location
 
             # Authoritative window type from NatHERS
@@ -497,12 +652,16 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             if nat_type:
                 matched_type = nat_type
 
-            # D9: Prefer certificate dimensions
+            # Plan Wins! Prioritize plan height and width over NatHERS if available (SOW 3.1 & BRD M5.1.001)
             nh = nat_w.get("height")
             nw = nat_w.get("width")
-            if nh:
+            if h:
+                matched_h = h
+            elif nh:
                 matched_h = nh
-            if nw:
+            if w:
+                matched_w = w
+            elif nw:
                 matched_w = nw
 
             # Dimension check (Issue #14: Scale severity and penalty by magnitude)

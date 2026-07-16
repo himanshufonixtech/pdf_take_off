@@ -34,7 +34,7 @@ def call_openai_chat(model: str, messages: list, response_format: str = "json_ob
         method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as res:
+        with urllib.request.urlopen(req, timeout=180) as res:
             res_data = json.loads(res.read().decode('utf-8'))
             return res_data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as he:
@@ -50,7 +50,7 @@ async def _async_post_openai(session: aiohttp.ClientSession, payload: dict) -> d
         "Authorization": f"Bearer {config.get_openai_api_key()}",
         "Content-Type": "application/json"
     }
-    async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+    async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=180)) as resp:
         resp.raise_for_status()
         return await resp.json()
 
@@ -73,7 +73,8 @@ def call_openai_chat_concurrent(requests_payloads: list) -> list:
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, _runner(requests_payloads))
-            return future.result(timeout=120)
+            return future.result(timeout=300)
+
     else:
         return asyncio.run(_runner(requests_payloads))
 
@@ -136,6 +137,38 @@ def _is_glazed_opening(w: dict) -> bool:
     return True
 
 
+def parse_type_from_glazing_string(glazing_str: str) -> str:
+    """Parses window/door opening type from glazing description string."""
+    if not glazing_str:
+        return None
+    s = glazing_str.lower()
+    if "sliding window" in s:
+        return "sliding"
+    elif "sliding door" in s:
+        return "sliding door"
+    elif "awning window" in s or "awning" in s:
+        return "awning"
+    elif "casement" in s:
+        return "casement"
+    elif "double hung" in s or "double-hung" in s:
+        return "double hung"
+    elif "fixed" in s:
+        return "fixed"
+    elif "bifold" in s or "bi-fold" in s:
+        return "bifold door"
+    elif "stacker" in s:
+        return "stacker door"
+    elif "louvre" in s:
+        return "louvre"
+    elif "hinged door" in s:
+        return "hinged door"
+    elif "door" in s:
+        return "door"
+    elif "window" in s:
+        return "window"
+    return None
+
+
 def _map_window_specifications(w: dict, all_glazing: dict, get_valid_frame_material) -> dict:
     """Maps glazing specification fields to a window row, handling non-glazed doors."""
     if not _is_glazed_opening(w):
@@ -158,34 +191,34 @@ def _map_window_specifications(w: dict, all_glazing: dict, get_valid_frame_mater
         w["shgc"] = all_glazing[glazing_id]["shgc"]
         w["glazing"] = all_glazing[glazing_id]["glazing"]
         w["frame_material"] = get_valid_frame_material(all_glazing[glazing_id].get("frame_material"), all_glazing[glazing_id]["glazing"])
-        return w
-        
-    # 2. Fuzzy match
-    found = False
-    for key, spec in all_glazing.items():
-        norm_key = _normalize_id(key)
-        # Check if one is substring of the other or if they are equal when normalized
-        if norm_key == norm_glazing_id or norm_key in norm_glazing_id or norm_glazing_id in norm_key:
-            w["u_value"] = spec["u_value"]
-            w["shgc"] = spec["shgc"]
-            w["glazing"] = spec["glazing"]
-            w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
-            found = True
-            break
-            
-    # 3. Last fallback (e.g. drop letter suffix like 'a' in GEN-04-003a to match GEN-04-003)
-    if not found and len(norm_glazing_id) > 1:
-        if norm_glazing_id[-1].isalpha():
-            short_norm = norm_glazing_id[:-1]
-            for key, spec in all_glazing.items():
-                norm_key = _normalize_id(key)
-                if norm_key == short_norm or norm_key in short_norm or short_norm in norm_key:
-                    w["u_value"] = spec["u_value"]
-                    w["shgc"] = spec["shgc"]
-                    w["glazing"] = spec["glazing"]
-                    w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
-                    found = True
-                    break
+        found = True
+    else:
+        # 2. Fuzzy match
+        found = False
+        for key, spec in all_glazing.items():
+            norm_key = _normalize_id(key)
+            # Check if one is substring of the other or if they are equal when normalized
+            if norm_key == norm_glazing_id or norm_key in norm_glazing_id or norm_glazing_id in norm_key:
+                w["u_value"] = spec["u_value"]
+                w["shgc"] = spec["shgc"]
+                w["glazing"] = spec["glazing"]
+                w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
+                found = True
+                break
+                
+        # 3. Last fallback (e.g. drop letter suffix like 'a' in GEN-04-003a to match GEN-04-003)
+        if not found and len(norm_glazing_id) > 1:
+            if norm_glazing_id[-1].isalpha():
+                short_norm = norm_glazing_id[:-1]
+                for key, spec in all_glazing.items():
+                    norm_key = _normalize_id(key)
+                    if norm_key == short_norm or norm_key in short_norm or short_norm in norm_key:
+                        w["u_value"] = spec["u_value"]
+                        w["shgc"] = spec["shgc"]
+                        w["glazing"] = spec["glazing"]
+                        w["frame_material"] = get_valid_frame_material(spec.get("frame_material"), spec["glazing"])
+                        found = True
+                        break
 
     if not found:
         w["u_value"] = w.get("u_value", "N/A")
@@ -193,6 +226,16 @@ def _map_window_specifications(w: dict, all_glazing: dict, get_valid_frame_mater
         w["glazing"] = w.get("glazing", "Per NatHERS Schedule")
         w["frame_material"] = get_valid_frame_material(w.get("frame_material"), w["glazing"])
         
+    # FIX #6: Parse type from glazing description if type is missing or generic
+    current_type = str(w.get("type", "")).lower().strip()
+    if current_type in ["n/a", "unknown", "none", "", "window", "door"]:
+        glazing_desc = w.get("glazing")
+        parsed_type = None
+        if glazing_desc:
+            parsed_type = parse_type_from_glazing_string(glazing_desc)
+        if parsed_type:
+            w["type"] = parsed_type
+
     return w
 
 
@@ -370,6 +413,13 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                     str(w.get("location", ""))
                 ):
                     continue
+                
+                # Exclude skylights / roof windows
+                tag_lower = str(w.get("tag", "")).lower()
+                type_lower = str(w.get("type", "")).lower()
+                if any(k in type_lower for k in ["skylight", "roof window", "roof_window"]) or any(k in tag_lower for k in ["rw", "sky"]):
+                    print(f"[NatHERS] Excluded skylight: tag={w.get('tag')}, type={type_lower}")
+                    continue
                     
                 w = _map_window_specifications(w, all_glazing, get_valid_frame_material)
                 reconciled_windows.append(w)
@@ -406,6 +456,13 @@ CRITICAL: If a page does not contain the respective table, return an empty list 
                     str(w.get("type", "")),
                     str(w.get("location", ""))
                 ):
+                    continue
+                
+                # Exclude skylights / roof windows
+                tag_lower = str(w.get("tag", "")).lower()
+                type_lower = str(w.get("type", "")).lower()
+                if any(k in type_lower for k in ["skylight", "roof window", "roof_window"]) or any(k in tag_lower for k in ["rw", "sky"]):
+                    print(f"[NatHERS] Excluded skylight: tag={w.get('tag')}, type={type_lower}")
                     continue
                     
                 w = _map_window_specifications(w, all_glazing, get_valid_frame_material)
@@ -664,13 +721,14 @@ def extract_plans_data(file_path: str, nathers_tags: set = None) -> list:
                 break
         if is_trade_sheet:
             continue
-
+            
         # 4. Fallback when title is unknown or not explicitly inclusion/exclusion: check for rooms
+        is_scanned = len(text_lower.strip()) < 100
         has_rooms = any(room in text_lower for room in [
             "bedroom", "bed ", "kitchen", "living", "family", "garage",
             "bathroom", "ensuite", "laundry", "alfresco", "porch"
         ])
-        if not has_rooms:
+        if not is_scanned and not has_rooms:
             continue
             
         # Fallback text exclusions for pages with rooms but potentially no clear title
@@ -698,6 +756,18 @@ def extract_plans_data(file_path: str, nathers_tags: set = None) -> list:
             if any(room in text for room in ["bedroom", "kitchen", "living", "family room", "bathroom"]):
                 floor_plan_indices.append(i)
 
+    # New Fallback for scanned plans: if still nothing found, assume the pages might be scanned images
+    # and treat landscape pages (or first 15 pages) as candidate plan pages.
+    if not floor_plan_indices:
+        for i, page in enumerate(doc):
+            rect = page.rect
+            if rect.width > rect.height and rect.width > 700:
+                floor_plan_indices.append(i)
+        if not floor_plan_indices:
+            floor_plan_indices = list(range(min(15, len(doc))))
+        else:
+            floor_plan_indices = floor_plan_indices[:15]
+            
     if not floor_plan_indices:
         doc.close()
         return []
@@ -775,6 +845,12 @@ CRITICAL QUANTITY & DUPLICATE INSTANCE RULE: The page text often has multiple in
             payload_metadata.append({"page_num": page_num, "strategy": "text"})
         else:
             # Vision fallback
+            vision_model = config.get_openai_vision_model().lower()
+            is_text_only = any(m in vision_model for m in ["deepseek", "qwen", "gemma", "mistral", "llama", "nemotron", "kimi", "glm"])
+            if is_text_only:
+                print(f"[Plans] Skipping vision extraction (text-only model '{vision_model}' configured).")
+                continue
+                
             pix = page.get_pixmap(dpi=150)
             temp_img_path = os.path.join(os.path.dirname(file_path), f"temp_floor_plan_{page_num}.jpg")
             pix.save(temp_img_path)
@@ -820,7 +896,8 @@ CRITICAL QUANTITY & DUPLICATE INSTANCE RULE: The page text often has multiple in
     try:
         results = call_openai_chat_concurrent(payloads)
         if results and all(isinstance(r, Exception) for r in results):
-            raise results[0]
+            print(f"[Plans] All API extraction requests failed: {results[0]}")
+            return []
         for res, meta in zip(results, payload_metadata):
             if isinstance(res, Exception):
                 print(f"Error extracting floor plan data for page {meta['page_num']}: {res}")
@@ -867,6 +944,12 @@ CRITICAL QUANTITY & DUPLICATE INSTANCE RULE: The page text often has multiple in
                     
                     if has_size_codes and standard_tag_pattern.match(tag):
                         print(f"[Plans] Suppressed standard tag '{tag}' because page has size codes.")
+                        continue
+
+                    # Exclude skylights/roof windows (roof windows are out of scope SOW 2.3)
+                    tag_lower = tag.lower()
+                    if any(k in w_type for k in ["skylight", "roof window", "roof_window"]) or any(k in tag_lower for k in ["rw", "sky"]):
+                        print(f"[Plans] Excluded skylight: tag={tag}, type={w_type}")
                         continue
 
                     # FIX #4: Exclude opaque/garage doors from plans too

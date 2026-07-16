@@ -279,69 +279,54 @@ def process_takeoff_background(job_id: str):
         classified_basix = [f for f in job["files"] if f.get("type") == "BASIX"]
         classified_plans = [f for f in job["files"] if f.get("type") in ("Plans", "Hybrid")]
 
-        # Issue #4: Certificate-absent check
+        # Issue #4 (revised): Certificate-absent check.
+        # If no NatHERS is present, check if plans + BASIX are available for a fallback takeoff.
         if not classified_nathers:
-            job["status"] = "Rejected"
-            job["stage"] = "Rejected"
-            job["progress"] = 100
-            job["is_rejected"] = True
-            job["rejection_reason"] = "No NatHERS certificate provided — cannot produce a schedule."
-            job["takeoff_rows"] = []
-            
-            dup_flags = []
-            for note in duplicate_notes:
-                dup_flags.append({
-                    "flag_type": "duplicate_file_skipped",
-                    "item_ref": "Upload Files",
-                    "category": "Duplicate File Note",
-                    "opening_id": "File Upload",
-                    "description": note,
-                    "severity": "Low"
-                })
-            job["flags"] = [{
-                "flag_type": "no_certificate",
-                "item_ref": "NatHERS Certificate",
-                "category": "Missing Certificate",
-                "opening_id": "NatHERS",
-                "description": "No NatHERS certificate provided — cannot produce a schedule.",
-                "severity": "High"
-            }] + dup_flags
-            job["overall_confidence"] = 0.0
-            save_jobs_db()
-            return
+            has_plans_for_fallback = bool(classified_plans)
+            has_basix_for_fallback = bool(classified_basix)
 
-        # Issue #1: Multi-certificate guard (multiple jobs)
+            if not has_plans_for_fallback:
+                # Nothing useful — hard reject
+                job["status"] = "Rejected"
+                job["stage"] = "Rejected"
+                job["progress"] = 100
+                job["is_rejected"] = True
+                job["rejection_reason"] = "No NatHERS certificate provided — cannot produce a schedule."
+                job["takeoff_rows"] = []
+
+                dup_flags = []
+                for note in duplicate_notes:
+                    dup_flags.append({
+                        "flag_type": "duplicate_file_skipped",
+                        "item_ref": "Upload Files",
+                        "category": "Duplicate File Note",
+                        "opening_id": "File Upload",
+                        "description": note,
+                        "severity": "Low"
+                    })
+                job["flags"] = [{
+                    "flag_type": "no_certificate",
+                    "item_ref": "NatHERS Certificate",
+                    "category": "Missing Certificate",
+                    "opening_id": "NatHERS",
+                    "description": "No NatHERS certificate provided — cannot produce a schedule.",
+                    "severity": "High"
+                }] + dup_flags
+                job["overall_confidence"] = 0.0
+                save_jobs_db()
+                return
+            # else: plans (and optionally BASIX) are present — mark for fallback path, continue
+            job["_no_nathers_fallback"] = True
+            print(f"[{job_id}] No NatHERS certificate found. Running plans-only fallback takeoff.")
+
+        # Issue #1 (revised): Multiple NatHERS certificates now supported for multi-dwelling projects.
+        # Log an informational note but do NOT reject — merge all schedules together.
         if len(classified_nathers) > 1:
-            job["status"] = "Rejected"
-            job["stage"] = "Rejected"
-            job["progress"] = 100
-            job["is_rejected"] = True
-            job["rejection_reason"] = "Multiple jobs detected: Upload contains multiple NatHERS certificates. Please upload files for one project at a time."
-            job["takeoff_rows"] = []
-            
-            dup_flags = []
-            for note in duplicate_notes:
-                dup_flags.append({
-                    "flag_type": "duplicate_file_skipped",
-                    "item_ref": "Upload Files",
-                    "category": "Duplicate File Note",
-                    "opening_id": "File Upload",
-                    "description": note,
-                    "severity": "Low"
-                })
-            job["flags"] = [{
-                "flag_type": "multiple_certificates",
-                "item_ref": "NatHERS Certificates",
-                "category": "Multiple Jobs",
-                "opening_id": "NatHERS",
-                "description": "Multiple NatHERS certificates detected in upload.",
-                "severity": "High"
-            }] + dup_flags
-            job["overall_confidence"] = 0.0
-            save_jobs_db()
-            return
+            print(f"[{job_id}] Multiple NatHERS certificates ({len(classified_nathers)}) detected. Processing as multi-dwelling submission.")
+            job["_multi_dwelling"] = True
+            # Address mismatch guard is still applied per-certificate below.
 
-        # Extract address tokens from NatHERS certificate
+        # Extract address tokens from NatHERS certificate(s)
         nathers_tokens = set()
         for f in classified_nathers:
             text = extract_first_pages_text(f["path"]) + " " + f.get("filename", "")
@@ -544,9 +529,11 @@ def process_takeoff_background(job_id: str):
             if not nathers_windows or len(plans_windows) >= 0.3 * len(nathers_windows):
                 has_plans = True
                 
+        has_nathers = not job.get("_no_nathers_fallback", False)
         recon_results = reconcile_takeoff(
-            plans_windows, nathers_windows, basix_data, 
-            has_plans=has_plans, has_plans_file=has_plans_file
+            plans_windows, nathers_windows, basix_data,
+            has_plans=has_plans, has_plans_file=has_plans_file,
+            has_nathers=has_nathers
         )
         
         # Add duplicate file notes if any to flags (Issue #3)
