@@ -163,13 +163,22 @@ def generate_takeoff_excel(recon_results: dict, output_path: str, project_name: 
     # -------------------------------------------------------------
     # TAB 2+: TAKEOFF SHEET(S)
     # -------------------------------------------------------------
-    # Setup Dwyer sheets based on project type
-    sheet_names = ["Takeoff"]
-    if project_type == "Duplex":
-        sheet_names = ["Dwelling 1", "Dwelling 2"]
-    elif project_type == "Multi-unit":
-        # Group by dwellings. In a prototype we can partition them or just output standard sheets.
-        sheet_names = ["Unit 1", "Unit 2"]
+    # Setup sheets based on project type and dynamic dwelling tagging
+    has_dwelling = any("dwelling" in r for r in rows)
+    if has_dwelling:
+        sheet_names = []
+        for r in rows:
+            dw = r.get("dwelling")
+            if dw and dw not in sheet_names:
+                sheet_names.append(dw)
+        if not sheet_names:
+            sheet_names = ["Takeoff"]
+    else:
+        sheet_names = ["Takeoff"]
+        if project_type == "Duplex":
+            sheet_names = ["Dwelling 1", "Dwelling 2"]
+        elif project_type == "Multi-unit":
+            sheet_names = ["Unit 1", "Unit 2"]
         
     for name in sheet_names:
         ws = wb.create_sheet(title=name)
@@ -207,14 +216,16 @@ def generate_takeoff_excel(recon_results: dict, output_path: str, project_name: 
         fill_low_conf = PatternFill(start_color="FDECEF", end_color="FDECEF", fill_type="solid") # soft warnings red/pink
         
         # Populate data rows
-        # For prototype, we place all rows on each tab, or split them in half if duplex.
-        tab_rows = rows
-        if project_type == "Duplex" and len(rows) > 1:
-            mid = math.ceil(len(rows) / 2)
-            if name == "Dwelling 1":
-                tab_rows = rows[:mid]
-            else:
-                tab_rows = rows[mid:]
+        if has_dwelling:
+            tab_rows = [r for r in rows if r.get("dwelling") == name]
+        else:
+            tab_rows = rows
+            if project_type == "Duplex" and len(rows) > 1:
+                mid = math.ceil(len(rows) / 2)
+                if name == "Dwelling 1":
+                    tab_rows = rows[:mid]
+                else:
+                    tab_rows = rows[mid:]
                 
         for row_idx, r in enumerate(tab_rows, start=3):
             ws.row_dimensions[row_idx].height = 20

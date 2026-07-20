@@ -331,7 +331,7 @@ def calculate_match_score(plan_w: dict, nat_w: dict) -> float:
     return score
 
 
-def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: dict, has_plans: bool = True, has_plans_file: bool = False, has_nathers: bool = True) -> dict:
+def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: dict, has_plans: bool = True, has_plans_file: bool = False, has_nathers: bool = True, dwelling_id: str = None) -> dict:
     """
     Reconciles window schedules from Plans and NatHERS,
     cross-checks against BASIX, calculates confidence,
@@ -439,6 +439,10 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         review_required = True
         review_reason = "No NatHERS certificate was supplied. Manual review of glazing performance values is required."
 
+        if dwelling_id:
+            for r in takeoff_rows:
+                r["dwelling"] = dwelling_id
+
         return {
             "rows":               takeoff_rows,
             "flags":              flags,
@@ -450,6 +454,7 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             "basix_details":      basix_data,
             "plan_glazing_area":  total_plan_area,
             "cert_glazing_area":  basix_area,
+            "matched_plan_ids":   [],
         }
 
 
@@ -545,6 +550,10 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         review_required = bool(critical_flags)
         review_reason = f"Job has {len(critical_flags)} critical consistency flags (High/Medium severity) requiring manual review." if review_required else ""
 
+        if dwelling_id:
+            for r in takeoff_rows:
+                r["dwelling"] = dwelling_id
+
         return {
             "rows":               takeoff_rows,
             "flags":              flags,
@@ -556,6 +565,7 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             "basix_details":      basix_data,
             "plan_glazing_area":  total_plan_area,
             "cert_glazing_area":  basix_area,
+            "matched_plan_ids":   [],
         }
 
     # Expand plans and NatHERS windows by quantity to match individual instances
@@ -1003,6 +1013,18 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
             else:
                 seen_sequential_tags[tag_upper] = 1
 
+    if dwelling_id:
+        for r in takeoff_rows:
+            r["dwelling"] = dwelling_id
+
+    # Collect all matched plan _temp_id values
+    matched_plan_ids = []
+    for i, plan_w in enumerate(plans_windows):
+        if plan_to_nathers_match.get(i, -1) != -1:
+            temp_id = plan_w.get("_temp_id")
+            if temp_id:
+                matched_plan_ids.append(temp_id)
+
     return {
         "rows":               takeoff_rows,
         "flags":              flags,
@@ -1014,5 +1036,6 @@ def reconcile_takeoff(plans_windows: list, nathers_windows: list, basix_data: di
         "basix_details":      basix_data,
         "plan_glazing_area":  total_plan_area,
         "cert_glazing_area":  basix_area,
+        "matched_plan_ids":   matched_plan_ids,
     }
 

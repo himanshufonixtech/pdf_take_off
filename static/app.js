@@ -368,8 +368,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!response.ok) throw new Error("Could not fetch jobs list");
             
             const jobs = await response.json();
-            // Sidebar mein Completed aur Review Required dono dikhao (dono finished states hain)
-            const completedJobs = jobs.filter(j => j.status === "Completed" || j.status === "Review Required");
+            // Sidebar mein Completed, Review Required aur Rejected teeno dikhao (teeno finished states hain)
+            const completedJobs = jobs.filter(j => j.status === "Completed" || j.status === "Review Required" || j.status === "Rejected");
             renderRecentJobs(completedJobs);
             
             if (autoTrack) {
